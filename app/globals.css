@@ -1,0 +1,32 @@
+/* DailyWon Design System Tokens for FPBank */
+@import 'tailwindcss';
+
+:root {
+  /* === Primary & Accent (DailyWon rule: single accent only, Blue) === */
+  --color-primary: #2563eb;       /* Blue-600 */
+  
+  /* === State colors (Dailywon max 3 dominant per screen: Blue + Green/Red/Orange) === */
+  --color-success: #16a34a;       /* Green-600   */
+  --color-danger: #ef4444;        /* Red-500     */
+  --color-warning: #f59e0b;       /* Orange-600    */
+
+  /* === Surface & Border (DailyWon pure white, Gray 300 border) === */
+  --color-surface: #fafafa;       /* Near pure white (dailywon bg) */
+  --color-border: #d1d5db;        /* Gray 300    */
+  
+  /* === Radius (DailyWon spec: Card=16px, Button=14px, Input=14px ✅) === */
+  --radius-card: 16px;           
+  --radius-button: 14px;         
+  --radius-input: 14px;          
+
+  /* === shadow (soft only, dailywon rule ✅ no strong shadows) === */
+  --shadow-soft: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* DailyWon Typography: Inter 폰트 전용, max 2 weights, comfortable line height ⬆️📐 */
+body {
+  font-family: var(--font-inter), system-ui, sans-serif;
+  background-color: var(--color-surface);
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
