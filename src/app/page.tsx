@@ -8,10 +8,18 @@ import { StatsCard } from "@/components/stats-card";
 import { AddItemForm } from "@/components/add-item-form";
 import { DataTable } from "@/components/data-table";
 import { TotalSummaryCard } from "@/components/total-summary-card";
+import { DocumentAnalysisZone } from "@/components/document-analysis-zone";
+import { mergeAnalyzedItems, type NormalizedFPAnalysisItem } from "@/lib/fp-analysis";
 
 export default function FPBankApp() {
   const hook = useFPItems();
   const hasItems = hook.items.length > 0;
+
+  function applyAnalyzedItems(analyzed: NormalizedFPAnalysisItem[]) {
+    const merged = mergeAnalyzedItems(hook.items, analyzed);
+    hook.loadFromExcel(merged.items);
+    return { addedCount: merged.addedCount, skippedCount: merged.skippedCount };
+  }
 
   return (
     <main className="min-h-screen px-4 py-5 sm:px-6 sm:py-8 lg:px-8">
@@ -28,7 +36,7 @@ export default function FPBankApp() {
           </div>
           <div className="hidden items-center gap-2 rounded-full border border-[#dfe3dc] bg-white/70 px-3 py-2 text-xs font-medium text-[#5d635a] backdrop-blur sm:flex">
             <ShieldCheck className="h-3.5 w-3.5 text-[#4a8b25]" aria-hidden="true" />
-            브라우저 내 안전한 분석
+            Excel은 브라우저에서 분석
           </div>
         </header>
 
@@ -50,6 +58,8 @@ export default function FPBankApp() {
             <FpUploadZone onFileUpload={hook.handleFileUpload} />
           </div>
         </section>
+
+        <DocumentAnalysisZone onApply={applyAnalyzedItems} />
 
         <section className="mb-6 grid gap-6 lg:grid-cols-[1fr_360px]">
           <AddItemForm onAdd={hook.addItem} />
@@ -97,7 +107,7 @@ export default function FPBankApp() {
 
         <footer className="mt-10 flex flex-col gap-2 border-t border-[#dfe3dc] py-6 text-xs text-[#858b82] sm:flex-row sm:items-center sm:justify-between">
           <span>FPBank · Function Point Analysis</span>
-          <span>데이터는 서버로 전송되지 않고 브라우저에서 처리됩니다.</span>
+          <span>Excel은 브라우저에서 처리 · AI 분석 파일은 서버 전송 후 저장하지 않도록 요청합니다.</span>
         </footer>
       </div>
     </main>
