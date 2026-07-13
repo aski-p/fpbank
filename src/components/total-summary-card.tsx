@@ -30,7 +30,7 @@ export function TotalSummaryCard({ totalFP, adjustedFP, itemCount }: TotalSummar
           </strong>
           <span className="mb-2 text-sm font-semibold text-white/55">FP</span>
         </div>
-        <p className="mt-3 text-sm text-white/45">총점에 표준 보정률 0.6을 적용한 결과</p>
+        <p className="mt-3 text-sm text-white/45">IBK 보정식 (43% × 0.6 + 57%)을 적용한 결과</p>
         <div className="mt-8 grid grid-cols-2 gap-3 border-t border-white/10 pt-5">
           <div>
             <p className="text-xs text-white/40">원점수</p>

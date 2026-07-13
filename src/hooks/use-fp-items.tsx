@@ -1,5 +1,6 @@
-import { useFPStore, type FPItem, type FPType } from "@/stores/fp-store";
-import { classifyFPType, calculateFP, FP_WEIGHTS } from "@/lib/fp-calculator";
+import { useFPStore, type FPItem } from "@/stores/fp-store";
+import { calculateFP } from "@/lib/fp-calculator";
+import { parseFPExcelRows } from "@/lib/excel-import";
 import * as XLSX from "xlsx";
 import { assertExcelRowLimit, MAX_EXCEL_ROWS, validateExcelFile } from "@/lib/excel-file";
 
@@ -31,29 +32,7 @@ export function useFPItems() {
         if (!sheetName) return;
         const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1 });
         assertExcelRowLimit(rows.length);
-        const parsed: FPItem[] = [];
-
-        for (const row of rows) {
-          if (!Array.isArray(row) || row.length === 0) continue;
-          const appName = String(row[0] ?? "").trim();
-          const businessName = String(row[1] ?? "").trim();
-          const processName = String(row[2] ?? "").trim();
-          const description = String(row[3] ?? "").trim();
-          if (!appName && !businessName && !processName && !description) continue;
-          if (/애플리케이션|어플리케이션|앱명/i.test(appName) && /업무/i.test(businessName)) continue;
-
-          const fpType = classifyFPType(processName || description) as FPType;
-          parsed.push({
-            id: makeId(),
-            appName: appName || "i-ONE Bank",
-            businessName: businessName || appName || "미분류 업무",
-            processName: processName || description,
-            description: description || processName,
-            fpType,
-            weight: FP_WEIGHTS[fpType],
-            remark: "Excel 자동 분석",
-          });
-        }
+        const parsed = parseFPExcelRows(rows, makeId);
         loadFromExcel(parsed);
       } catch (error) {
         if (error instanceof Error) throw error;
@@ -65,7 +44,7 @@ export function useFPItems() {
     const workbook = XLSX.utils.book_new();
     const rows: (string | number)[][] = [
       ["총 기능점수", result.totalFP],
-      ["보정 후 ×0.6", result.adjustedFP],
+      ["보정 후 기능점수", result.adjustedFP],
     ];
 
     for (const type of ["ILF", "EIF", "EI", "EO", "EQ"] as const) {

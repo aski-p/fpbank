@@ -98,7 +98,9 @@ export interface FPResult {
   adjustedFP: number;
 }
 
-const ADJUSTMENT_RATE = 0.6; // IBK型 표준 보정율
+const ADJUSTMENT_COEFFICIENT = 0.6;
+const ADJUSTED_SHARE = 0.43;
+const BASE_SHARE = 0.57;
 
 export function calculateFP(items: FPItem[]): FPResult {
   const fpByType: Record<string, { count: number; totalFp: number }> = {};
@@ -111,10 +113,11 @@ export function calculateFP(items: FPItem[]): FPResult {
     };
   }
 
-  const totalFP = Object.values(fpByType).reduce((s, t) => s + t.totalFp, 0);
-  const adjustedFP = Math.round(totalFP * ADJUSTMENT_RATE * 100) / 100;
+  const rawTotalFP = items.reduce((sum, item) => sum + item.weight, 0);
+  const totalFP = Math.round(rawTotalFP * 100) / 100;
+  const adjustedFP = Math.round(rawTotalFP * (ADJUSTED_SHARE * ADJUSTMENT_COEFFICIENT + BASE_SHARE) * 100) / 100;
 
-  return { items, totalFP: Math.round(totalFP*10)/10, fpByType: fpByType as Record<FPType, { count: number; totalFp: number }>, adjustedFP };
+  return { items, totalFP, fpByType: fpByType as Record<FPType, { count: number; totalFp: number }>, adjustedFP };
 }
 
 /** FP 유형 label/색상 */
