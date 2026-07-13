@@ -1,68 +1,99 @@
-import { useFPStore, FPItem } from "@/stores/fp-store";
+import { useFPStore, type FPItem, type FPType } from "@/stores/fp-store";
 import { classifyFPType, calculateFP, FP_WEIGHTS } from "@/lib/fp-calculator";
 import * as XLSX from "xlsx";
 
 function makeId() {
-  return Date.now().toString() + "-" + Math.random().toString(36).slice(2);
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function useFPItems() {
-  const items = useFPStore((s) => s.items);
-  const editId = useFPStore((s) => s.editId);
-  const addItemHandler = useFPStore((s) => s.addItem);
-  const removeItem = useFPStore((s) => s.removeItem);
-  const updateItem = useFPStore((s) => s.updateItem);
-  const setEditId = useFPStore((s) => s.setEditId);
-  const clearAll = useFPStore((s) => s.clearAll);
-  const loadFromExcel = useFPStore((s) => s.loadFromExcel);
+  const items = useFPStore((state) => state.items);
+  const editId = useFPStore((state) => state.editId);
+  const addItemToStore = useFPStore((state) => state.addItem);
+  const removeItem = useFPStore((state) => state.removeItem);
+  const updateItem = useFPStore((state) => state.updateItem);
+  const setEditId = useFPStore((state) => state.setEditId);
+  const clearAll = useFPStore((state) => state.clearAll);
+  const loadFromExcel = useFPStore((state) => state.loadFromExcel);
 
   const result = calculateFP(items);
 
+  function addItem(item: Omit<FPItem, "id">) {
+    addItemToStore({ ...item, id: makeId() });
+  }
+
   function handleFileUpload(file: File) {
     const reader = new FileReader();
-    reader.onload = (e: ProgressEvent<FileReader>) => {
-      if (!e.target?.result) return;
+    reader.onload = (event: ProgressEvent<FileReader>) => {
+      if (!event.target?.result) return;
       try {
-        const wb = XLSX.read(e.target.result, { type: "binary" });
-        const wsName = wb.SheetNames[0];
-        if (!wsName) return;
-        const rows = (XLSX.utils.sheet_to_json(wb.Sheets[wsName], { header: 1 }) as unknown) as any[][];
+        const workbook = XLSX.read(event.target.result, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        if (!sheetName) return;
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1 });
         const parsed: FPItem[] = [];
+
         for (const row of rows) {
-          if (!row || row.length === 0) continue;
-          let ra = String(row[0] ?? "");
-          let rb = String(row[1] ?? "");
-          let rp = String(row[2] ?? "");
-          let rd = String(row[3] ?? "");
-          if (!ra && !rb && !rp && !rd) continue;
-          const fpType = classifyFPType(rp || rd) as FPItem["fpType"];
-          parsed.push({ id: makeId(), appName: ra || "i-ONE Bank", businessName: rb || ra, processName: rp || rd, description: rd || rp, fpType, weight: FP_WEIGHTS[fpType], remark: "(엑셀 자동 분석)" });
+          if (!Array.isArray(row) || row.length === 0) continue;
+          const appName = String(row[0] ?? "").trim();
+          const businessName = String(row[1] ?? "").trim();
+          const processName = String(row[2] ?? "").trim();
+          const description = String(row[3] ?? "").trim();
+          if (!appName && !businessName && !processName && !description) continue;
+          if (/애플리케이션|어플리케이션|앱명/i.test(appName) && /업무/i.test(businessName)) continue;
+
+          const fpType = classifyFPType(processName || description) as FPType;
+          parsed.push({
+            id: makeId(),
+            appName: appName || "i-ONE Bank",
+            businessName: businessName || appName || "미분류 업무",
+            processName: processName || description,
+            description: description || processName,
+            fpType,
+            weight: FP_WEIGHTS[fpType],
+            remark: "Excel 자동 분석",
+          });
         }
         loadFromExcel(parsed);
-      } catch (err) { console.error(err); }
+      } catch (error) {
+        console.error("Excel 파일을 분석하지 못했습니다.", error);
+      }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   }
 
   function handleDownload() {
-    const wb = XLSX.utils.book_new();
-    const rows: (string | number)[][] = [];
-    rows.push(["총 기능점수", result.totalFP]);
-    rows.push(["보정후 ×0.6", result.adjustedFP]);
-    for (const tp of ["ILF", "EIF", "EI", "EO", "EQ"]) {
-      const r = result.fpByType[tp as keyof typeof result.fpByType];
-      if (r) rows.push([`${tp}: ${r.count}개, 합계 ${r.totalFp}`]);
+    const workbook = XLSX.utils.book_new();
+    const rows: (string | number)[][] = [
+      ["총 기능점수", result.totalFP],
+      ["보정 후 ×0.6", result.adjustedFP],
+    ];
+
+    for (const type of ["ILF", "EIF", "EI", "EO", "EQ"] as const) {
+      const typeResult = result.fpByType[type];
+      rows.push([`${type}: ${typeResult.count}개`, `합계 ${typeResult.totalFp} FP`]);
     }
-    rows.push([]);
-    rows.push(["어플리케이션명", "업무명", "프로세스명", "설명", "FP유형", "가중치"]);
-    for (const it of items) {
-      rows.push([it.appName, it.businessName, it.processName, it.description, String(it.fpType), String(it.weight)]);
+
+    rows.push([], ["애플리케이션명", "업무명", "프로세스명", "설명", "FP유형", "가중치"]);
+    for (const item of items) {
+      rows.push([item.appName, item.businessName, item.processName, item.description, item.fpType, item.weight]);
     }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "FP산정");
-    XLSX.writeFile(wb, `_fp_` + new Date().toISOString().slice(0, 10) + ".xlsx");
+
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "FP산정");
+    XLSX.writeFile(workbook, `fpbank_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   return {
-    items, editId, result, handleFileUpload, handleDownload, addItemHandler as addItem, removeItem, updateItem, setEditId, clearAll, loadFromExcel
+    items,
+    editId,
+    result,
+    handleFileUpload,
+    handleDownload,
+    addItem,
+    removeItem,
+    updateItem,
+    setEditId,
+    clearAll,
+    loadFromExcel,
   };
 }

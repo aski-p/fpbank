@@ -1,40 +1,47 @@
 import { motion } from "framer-motion";
-import { Calculator, Award } from "lucide-react";
+import { ArrowUpRight, Gauge } from "lucide-react";
 
 interface TotalSummaryCardProps {
   totalFP: number;
   adjustedFP: number;
+  itemCount: number;
 }
 
-export function TotalSummaryCard({ totalFP, adjustedFP }: TotalSummaryCardProps) {
+export function TotalSummaryCard({ totalFP, adjustedFP, itemCount }: TotalSummaryCardProps) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
+    <motion.article
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      className="bg-white rounded-[16px] p-6 shadow-sm border border-gray-200 flex items-center justify-between"
+      transition={{ duration: 0.35, ease: "easeOut" }}
+      className="relative overflow-hidden rounded-[28px] bg-[#151714] p-6 text-white sm:p-8"
     >
-      <div>
-        <h3 className="text-[24px] font-semibold text-gray-900 tracking-tight">총 기능점수</h3>
-        <p className="text-sm text-gray-500 mt-1 mb-4">FP 산정 기준에 따른 자동 분석 결과입니다.</p>
-        
-        <div className="flex items-end gap-8">
+      <div className="absolute -right-14 -top-16 h-48 w-48 rounded-full bg-[#b9f56a]/15 blur-2xl" aria-hidden="true" />
+      <div className="relative">
+        <div className="flex items-center justify-between">
+          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/45">
+            <Gauge className="h-4 w-4 text-[#b9f56a]" aria-hidden="true" />
+            Adjusted score
+          </span>
+          <ArrowUpRight className="h-5 w-5 text-white/35" aria-hidden="true" />
+        </div>
+        <div className="mt-8 flex items-end gap-3">
+          <strong className="text-[clamp(3.5rem,9vw,5.5rem)] font-medium leading-none tracking-[-0.075em] text-[#b9f56a]">
+            {adjustedFP.toLocaleString("ko-KR")}
+          </strong>
+          <span className="mb-2 text-sm font-semibold text-white/55">FP</span>
+        </div>
+        <p className="mt-3 text-sm text-white/45">총점에 표준 보정률 0.6을 적용한 결과</p>
+        <div className="mt-8 grid grid-cols-2 gap-3 border-t border-white/10 pt-5">
           <div>
-            <span className="flex items-center gap-2 text-xs font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full mb-2">
-              <Calculator className="w-4 h-4" strokeWidth={1.5} />
-              총 FP
-            </span>
-            <div className="text-[32px] font-bold tracking-tighter text-blue-600">{totalFP}</div>
+            <p className="text-xs text-white/40">원점수</p>
+            <p className="mt-1 font-mono text-lg font-medium">{totalFP.toLocaleString("ko-KR")} FP</p>
           </div>
           <div>
-            <span className="flex items-center gap-2 text-xs font-medium text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full mb-2">
-              <Award className="w-4 h-4" strokeWidth={1.5} />
-              보정 후 (x0.6)
-            </span>
-            <div className="text-[32px] font-bold tracking-tighter text-emerald-600">{adjustedFP}</div>
+            <p className="text-xs text-white/40">분석 항목</p>
+            <p className="mt-1 font-mono text-lg font-medium">{itemCount.toLocaleString("ko-KR")} items</p>
           </div>
         </div>
       </div>
-    </motion.div>
+    </motion.article>
   );
 }

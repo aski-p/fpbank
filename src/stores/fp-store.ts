@@ -19,7 +19,7 @@ interface FPStore {
   bizName: string;
   addItem: (item: FPItem) => void;
   removeItem: (id: string) => void;
-  updateItem: (id: string, key: keyof FPItem, value: unknown) => void;
+  updateItem: (id: string, key: keyof FPItem, value: string | number) => void;
   setEditId: (id: string | null) => void;
   setBizName: (name: string) => void;
   clearAll: () => void;
@@ -42,6 +42,6 @@ export const useFPStore = create<FPStore>()((set) => ({
     })),
   setEditId: (id: string | null) => set({ editId: id }),
   setBizName: (name: string) => set({ bizName: name }),
-  clearAll: () => set((prev) => ({ items: [], editId: prev.editId !== null ? null : null, bizName: "" })),
+  clearAll: () => set({ items: [], editId: null, bizName: "" }),
   loadFromExcel: (items: FPItem[]) => set({ items }),
 }));

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { ArrowRight, Plus } from "lucide-react";
 import type { FPItem, FPType } from "@/stores/fp-store";
 import { classifyFPType, FP_WEIGHTS } from "@/lib/fp-calculator";
 
@@ -9,68 +9,69 @@ interface AddItemFormProps {
 
 export function AddItemForm({ onAdd }: AddItemFormProps) {
   const [description, setDescription] = useState("");
-  const [bizName, setBizName] = useState("");
+  const [businessName, setBusinessName] = useState("");
 
-  const handleAdd = () => {
-    const trimmed = description.trim();
-    if (!trimmed) return;
-
-    const typeKey = classifyFPType(trimmed) as FPType;
+  function handleAdd() {
+    const processName = description.trim();
+    if (!processName) return;
+    const fpType = classifyFPType(processName) as FPType;
     onAdd({
       appName: "Frontend App",
-      businessName: bizName || "App Business",
-      processName: trimmed,
-      description: trimmed,
-      fpType: typeKey,
-      weight: FP_WEIGHTS[typeKey],
-      remark: "수동입력",
+      businessName: businessName.trim() || "App Business",
+      processName,
+      description: processName,
+      fpType,
+      weight: FP_WEIGHTS[fpType],
+      remark: "수동 입력",
     });
     setDescription("");
-  };
+  }
 
   return (
-    <div className="bg-white rounded-[16px] p-4 shadow-sm border border-gray-200 space-y-3">
-      <div>
-        <label htmlFor="desc-input" className="block text-xs font-medium text-gray-500 mb-1">
-          기능 설명
-        </label>
-        <div className="flex gap-3 items-end">
-          <textarea
-            id="desc-input"
-            rows={2}
-            placeholder="기능을 입력하세요 (Enter로 추가)"
+    <div className="rounded-[24px] border border-[#dfe3dc] bg-white p-5 sm:p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8a9086]">Quick add</p>
+          <h2 className="mt-2 text-xl font-semibold tracking-[-0.035em]">기능 직접 추가</h2>
+        </div>
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-[#eef1eb] text-[#4f554d]">
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </div>
+      </div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]">
+        <label className="block">
+          <span className="sr-only">기능 설명</span>
+          <input
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault(); // Prevent new line in textarea
+            onChange={(event) => setDescription(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
                 handleAdd();
               }
             }}
-            className="flex-1 min-h-[44px] resize-none bg-white border rounded-[14px] px-3 py-2 text-sm focus:outline-none ring-1 ring-gray-100 focus:ring-blue-500 transition-shadow placeholder:text-gray-300"
+            placeholder="예: 고객 계좌 목록 조회"
+            className="fp-focus h-12 w-full rounded-2xl border border-[#dfe3dc] bg-[#f8f9f6] px-4 text-sm text-[#252823] outline-none transition placeholder:text-[#a3a8a0] focus:border-[#99cd5c] focus:bg-white"
           />
-          <button
-            onClick={handleAdd}
-            type="button"
-            className="inline-flex min-h-[44px] items-center gap-2 px-5 rounded-[14px] bg-blue-600 text-white font-medium hover:opacity-90 active:scale-[0.98] transition-all whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" strokeWidth={2} />
-            추가하기
-          </button>
-        </div>
-      </div>
-
-      <div>
-        <label htmlFor="biz-input" className="block text-xs font-medium text-gray-500 mb-1">
-          업무명 (선택)
         </label>
-        <input
-          id="biz-input"
-          type="text"
-          value={bizName}
-          onChange={(e) => setBizName(e.target.value)}
-          className="w-full min-h-[44px] bg-white border rounded-[14px] px-3 py-2 text-sm ring-1 ring-gray-100 focus:ring-blue-500 transition-shadow placeholder:text-gray-300"
-        />
+        <label className="block">
+          <span className="sr-only">업무명</span>
+          <input
+            value={businessName}
+            onChange={(event) => setBusinessName(event.target.value)}
+            placeholder="업무명 (선택)"
+            className="fp-focus h-12 w-full rounded-2xl border border-[#dfe3dc] bg-[#f8f9f6] px-4 text-sm text-[#252823] outline-none transition placeholder:text-[#a3a8a0] focus:border-[#99cd5c] focus:bg-white"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={!description.trim()}
+          className="fp-focus inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#b9f56a] px-5 text-sm font-semibold text-[#17320d] transition hover:bg-[#a8e958] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          분석 추가
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

@@ -1,6 +1,5 @@
-import { useState, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSpreadsheet } from "lucide-react";
+import { useRef, useState } from "react";
+import { FileSpreadsheet, UploadCloud } from "lucide-react";
 
 interface Props {
   onFileUpload: (file: File) => void;
@@ -10,53 +9,61 @@ export function FpUploadZone({ onFileUpload }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files[0]) onFileUpload(e.dataTransfer.files[0]);
+  function submitFile(file?: File) {
+    if (!file) return;
+    onFileUpload(file);
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   return (
-    <div className="relative">
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
-        className={`rounded-[16px] border-2 transition-colors ${
-          isDragOver ? "border-blue-300 bg-blue-50/50" : "border-gray-200 bg-white"
-        }`}
-      >
-        <div className="flex flex-col items-center py-8 px-6 text-center">
-          <div className="mb-4 p-3 rounded-full bg-gray-50">
-            <Upload className={`w-6 h-6 transition-colors ${isDragOver ? "text-blue-600" : "text-gray-400"}`} strokeWidth={1.5} />
-          </div>
-          <p className="text-base font-medium text-gray-900 mb-3">
-            파일로 여기로 드래그하세요 📂
-          </p>
-          <p className="text-sm text-gray-500 mb-4 max-w-xs">
-            엑설 파일을 여기로 드래그하거나 아래 버튼을 클릭하여 선택하세요. Excel의 첫 번째 시트가 분석됩니다.
-          </p>
-          <button
-            onClick={() => inputRef.current?.click()}
-            className="min-h-[44px] min-w-[120px] px-4 py-3 rounded-[14px] bg-blue-600 text-white font-medium hover:shadow-sm active:scale-[0.98] transition-opacity"
-          >
-            파일 📎 선택
-          </button>
+    <div
+      onDragOver={(event) => {
+        event.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setIsDragOver(false);
+        submitFile(event.dataTransfer.files[0]);
+      }}
+      className={`relative overflow-hidden rounded-[24px] border p-5 transition sm:p-6 ${
+        isDragOver
+          ? "border-[#b9f56a] bg-[#b9f56a]/15"
+          : "border-white/15 bg-white/[0.06] hover:border-white/25 hover:bg-white/[0.08]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-5">
+        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#b9f56a] text-[#17320d]">
+          <UploadCloud className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
         </div>
+        <span className="rounded-full border border-white/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-white/45">
+          .xlsx · .xls
+        </span>
       </div>
-
+      <div className="mt-7">
+        <h2 className="text-xl font-medium tracking-[-0.035em]">
+          {isDragOver ? "여기에 놓아주세요" : "Excel 분석 시작하기"}
+        </h2>
+        <p className="mt-2 max-w-md text-sm leading-6 text-white/55">
+          파일을 끌어다 놓거나 직접 선택하세요. 첫 번째 시트의 데이터를 브라우저에서 바로 분석합니다.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className="fp-focus mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-[#151714] transition hover:bg-[#b9f56a] active:scale-[0.99] sm:w-auto"
+      >
+        <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+        Excel 파일 선택
+      </button>
       <input
         ref={inputRef}
         type="file"
         accept=".xlsx,.xls"
-        onChange={(e) => {
-          const f = e.target.files;
-          if (f && f[0]) onFileUpload(f[0]);
-        }}
-        className="hidden"
+        onChange={(event) => submitFile(event.target.files?.[0])}
+        className="sr-only"
+        aria-label="분석할 Excel 파일 선택"
       />
     </div>
   );

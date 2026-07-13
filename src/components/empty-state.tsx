@@ -1,30 +1,25 @@
-import { motion } from "framer-motion";
-import { Upload, FileSpreadsheet } from "lucide-react";
+import { FileSpreadsheet, MousePointer2 } from "lucide-react";
 
 export function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.2 }}
-        className="flex flex-col items-center"
-      >
-        <div className="mb-6 p-4 rounded-full bg-blue-50">
-          <Upload className="w-8 h-8 text-blue-600" strokeWidth={1.5} />
+    <section
+      className="relative overflow-hidden rounded-[28px] border border-dashed border-[#cfd5ca] bg-white/55 px-6 py-14 text-center sm:py-20"
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(185,245,106,0.13),transparent_48%)]" aria-hidden="true" />
+      <div className="relative mx-auto max-w-md">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-[20px] bg-[#151714] text-[#b9f56a]">
+          <FileSpreadsheet className="h-6 w-6" strokeWidth={1.7} aria-hidden="true" />
         </div>
-        <h3 className="text-xl font-medium mb-2 text-gray-900 tracking-tight">
-          FP 항목이 없습니다
-        </h3>
-        <p className="text-sm text-gray-500 mb-6 max-w-sm">
-          Excelf 파일로 기능을 드래그하거나 아래 입력창에 기능명을 입력하세요.
-          자동으로 분석됩니다 📊
+        <h2 className="mt-6 text-2xl font-semibold tracking-[-0.045em]">분석할 데이터를 추가하세요</h2>
+        <p className="mt-3 text-sm leading-6 text-[#777d74]">
+          위에서 Excel 파일을 업로드하거나 기능을 직접 입력하면
+          유형별 FP와 보정 점수가 여기에 표시됩니다.
         </p>
-        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-xl text-xs text-blue-600">
-          <FileSpreadsheet className="w-4 h-4" strokeWidth={1.5} />
-          <span>XLSX 파일 드래그 & 드롭으로 자동 분석</span>
+        <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-xs font-medium text-[#666c63]">
+          <MousePointer2 className="h-3.5 w-3.5 text-[#59912f]" aria-hidden="true" />
+          별도 설치 없이 바로 분석
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </section>
   );
 }

@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --canvas: #f3f5f0;
+  --surface: #ffffff;
+  --surface-subtle: #f7f8f5;
+  --ink: #151714;
+  --muted: #71766f;
+  --line: #dfe3dc;
+  --accent: #b9f56a;
+  --accent-strong: #8ed63d;
+  --accent-ink: #17320d;
+  --danger: #d94b4b;
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 28px;
+  --shadow-float: 0 24px 60px rgba(27, 34, 24, 0.08);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--canvas);
+  --color-foreground: var(--ink);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--canvas);
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(185, 245, 106, 0.16), transparent 28rem),
+    var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.fp-focus:focus-visible {
+  outline: 3px solid rgba(142, 214, 61, 0.38);
+  outline-offset: 2px;
+}
+
+.fp-scrollbar {
+  scrollbar-color: #c4c9c0 transparent;
+  scrollbar-width: thin;
+}
+
+.fp-scrollbar::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.fp-scrollbar::-webkit-scrollbar-thumb {
+  background: #c4c9c0;
+  border-radius: 999px;
+}
+
+@media (max-width: 640px) {
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(185, 245, 106, 0.14), transparent 20rem),
+      var(--canvas);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
