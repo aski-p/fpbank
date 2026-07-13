@@ -1,6 +1,7 @@
 import { useFPStore, type FPItem, type FPType } from "@/stores/fp-store";
 import { classifyFPType, calculateFP, FP_WEIGHTS } from "@/lib/fp-calculator";
 import * as XLSX from "xlsx";
+import { assertExcelRowLimit, MAX_EXCEL_ROWS, validateExcelFile } from "@/lib/excel-file";
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -22,15 +23,14 @@ export function useFPItems() {
     addItemToStore({ ...item, id: makeId() });
   }
 
-  function handleFileUpload(file: File) {
-    const reader = new FileReader();
-    reader.onload = (event: ProgressEvent<FileReader>) => {
-      if (!event.target?.result) return;
+  async function handleFileUpload(file: File) {
+      validateExcelFile(file);
       try {
-        const workbook = XLSX.read(event.target.result, { type: "array" });
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", sheetRows: MAX_EXCEL_ROWS + 1 });
         const sheetName = workbook.SheetNames[0];
         if (!sheetName) return;
         const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1 });
+        assertExcelRowLimit(rows.length);
         const parsed: FPItem[] = [];
 
         for (const row of rows) {
@@ -56,10 +56,9 @@ export function useFPItems() {
         }
         loadFromExcel(parsed);
       } catch (error) {
-        console.error("Excel 파일을 분석하지 못했습니다.", error);
+        if (error instanceof Error) throw error;
+        throw new Error("Excel 파일을 분석하지 못했습니다.");
       }
-    };
-    reader.readAsArrayBuffer(file);
   }
 
   function handleDownload() {

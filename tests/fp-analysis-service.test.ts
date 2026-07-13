@@ -14,6 +14,7 @@ const safe: NormalizedFPAnalysisResult = {
     evidence: "등록 확인",
     rationale: "연결정보 유지",
     needsReview: false,
+    decisionStatus: "accepted",
     reviewReasons: [],
   }],
   warnings: [],

@@ -19,6 +19,7 @@ function item(overrides: Partial<NormalizedFPAnalysisItem> = {}): NormalizedFPAn
     needsReview: false,
     reviewReasons: [],
     ...overrides,
+    decisionStatus: overrides.decisionStatus ?? "accepted",
   };
 }
 

@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FPBank
 
-## Getting Started
+화면설계 문서와 Excel 자료에서 기능점수(FP) 후보를 추출·검토하고 분석표로 관리하는 Next.js 애플리케이션입니다.
 
-First, run the development server:
+## 로컬 실행
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+기본 주소는 `http://localhost:3000`입니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 검증
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test
+npm run typecheck
+npm run build
+```
 
-## Learn More
+## 기능
 
-To learn more about Next.js, take a look at the following resources:
+- `.xlsx` / `.xls` 기능점수 Excel 가져오기
+- 파일 크기 10MB, 첫 시트 10,000행 제한
+- 화면 이미지 및 PDF 업로드 검증
+- 로컬 Qwen 화면 관찰 → FP 판정 → 독립 감리
+- `UNKNOWN` 및 근거 부족 후보 자동 합계 제외
+- 기능 서명·데이터 그룹 기반 중복 제거
+- 선택적 OpenAI 교차검증
+- 단일 동시 실행 비동기 Job API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 분석 환경변수
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| 변수 | 설명 |
+|---|---|
+| `QWEN_API_BASE_URL` | Ollama/Qwen API 주소 |
+| `QWEN_MODEL` | 로컬 모델 이름 |
+| `QWEN_API_TOKEN` | 선택적 Qwen Bearer token |
+| `QWEN_STAGE_TIMEOUT_MS` | Qwen 단계별 제한, 60초~30분 범위 |
+| `OPENAI_API_KEY` | cloud/auto 모드의 서버 전용 API key |
+| `OPENAI_FP_MODEL` | cloud 교차검증 모델 |
+| `FP_ANALYSIS_MEMORY_QUEUE_ENABLED` | production 단일 인스턴스에서만 메모리 queue를 명시적으로 활성화 |
+| `FP_ANALYSIS_ALLOW_NON_BROWSER` | production에서 Origin 없는 worker/API 요청을 명시적으로 허용 |
 
-## Deploy on Vercel
+API key와 access token을 `NEXT_PUBLIC_*` 변수에 넣지 마세요.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 배포 안전 조건
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Vercel
+
+`FP_ANALYSIS_MEMORY_QUEUE_ENABLED`를 **설정하지 마세요**.
+
+Vercel에서는 요청이 서로 다른 isolate로 전달될 수 있으므로 process-local queue와 결과 저장소를 사용할 수 없습니다. 기본 production 설정에서는 다음처럼 안전하게 닫힙니다.
+
+- `POST /api/analyze-fp` → `410 Gone`
+- `POST /api/analyze-fp/jobs` → `503 ANALYSIS_WORKER_UNAVAILABLE`
+- UI는 worker 미연결 상태를 표시하고 화면설계 분석 버튼을 비활성화
+- Excel 분석과 기능 직접 추가는 계속 사용 가능
+
+### 단일 self-hosted Node 인스턴스
+
+내부망의 단일 인스턴스에서만 다음을 설정해 메모리 queue를 사용할 수 있습니다.
+
+```bash
+FP_ANALYSIS_MEMORY_QUEUE_ENABLED=true
+QWEN_API_BASE_URL=http://qwen-host:11434
+npm start
+```
+
+이 모드는 process 재시작 시 대기·실행 작업이 사라지는 내부용 구성입니다.
+
+### 공개 AI 분석 활성화 전 필수 구성
+
+공개 서비스에서는 메모리 queue를 사용하지 말고 다음을 먼저 구성해야 합니다.
+
+1. Redis/SQS 등 durable queue
+2. object storage 기반 업로드 보관
+3. 공유 job/result 저장소
+4. 별도 supervised worker
+5. 사용자·세션 인증과 job 소유권 검증
+6. distributed rate limit과 quota
+7. retry, cancellation, idempotency, queue observability
+
+Job 조회에는 생성 시 발급된 별도 Bearer access token이 필요하며 완료·실패 결과는 10분 후 정리됩니다.

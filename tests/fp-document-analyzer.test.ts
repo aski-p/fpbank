@@ -14,6 +14,10 @@ function webpFile(name = "screen.webp"): File {
   return new File([new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])], name, { type: "image/webp" });
 }
 
+function cloudOptions(fetchImpl: typeof fetch) {
+  return { apiKey: ["test", "key"].join("-"), fetchImpl };
+}
+
 function responsePayload(text: string) {
   return {
     output: [{
@@ -67,6 +71,7 @@ describe("fileToOpenAIContent", () => {
     const file = new File([new Uint8Array([37, 80, 68, 70])], "../설계서.pdf", { type: "application/pdf" });
     const content = await fileToOpenAIContent(file);
     expect(content.type).toBe("input_file");
+    if (content.type !== "input_file") throw new Error("expected PDF input_file content");
     expect(content.filename).toBe("설계서.pdf");
     expect(content.file_data).toBe("data:application/pdf;base64,JVBERg==");
   });
@@ -103,6 +108,37 @@ describe("analyzeFPDocuments", () => {
     expect(JSON.stringify(secondBody)).not.toContain("data:image/webp;base64");
     expect(firstBody.store).toBe(false);
     expect(secondBody.store).toBe(false);
+  });
+
+  it("binds cloud observation source refs to uploaded filenames", async () => {
+    const hallucinated = {
+      ...validObservationResult,
+      screens: validObservationResult.screens.map((screen) => ({ ...screen, sourceRef: "made-up.webp" })),
+    };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(responsePayload(JSON.stringify(hallucinated))), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(responsePayload(JSON.stringify(validModelResult))), { status: 200 }));
+
+    await analyzeFPDocuments([webpFile("actual.webp")], cloudOptions(fetchImpl));
+    const classificationBody = JSON.parse(String(fetchImpl.mock.calls[1][1].body));
+    expect(JSON.stringify(classificationBody)).toContain("actual.webp");
+    expect(JSON.stringify(classificationBody)).not.toContain("made-up.webp");
+  });
+
+  it("rejects an unknown cloud source ref when multiple files make it ambiguous", async () => {
+    const hallucinated = {
+      ...validObservationResult,
+      screens: validObservationResult.screens.map((screen) => ({ ...screen, sourceRef: "made-up.webp" })),
+    };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(responsePayload(JSON.stringify(hallucinated))), { status: 200 }),
+    );
+
+    await expect(analyzeFPDocuments(
+      [webpFile("one.webp"), webpFile("two.webp")],
+      cloudOptions(fetchImpl),
+    )).rejects.toThrowError(/파일 출처/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a file whose bytes do not match its declared type", async () => {

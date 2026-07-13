@@ -8,6 +8,7 @@ import {
   validateAnalysisFiles,
   type NormalizedFPAnalysisResult,
 } from "@/lib/fp-analysis";
+import { groundAnalysisResult, type FPDocumentObservations } from "@/lib/local-qwen-analyzer";
 
 interface OpenAIImageContent {
   type: "input_image";
@@ -67,7 +68,7 @@ function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
   return prefix.every((value, index) => bytes[index] === value);
 }
 
-async function validateFileContents(files: File[]): Promise<void> {
+export async function validateAnalysisFileContents(files: File[]): Promise<void> {
   for (const file of files) {
     const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
     const valid = file.type === "image/png"
@@ -164,7 +165,7 @@ async function callStructuredResponse(options: StructuredCallOptions): Promise<u
   }
 }
 
-function validateObservations(payload: unknown): Record<string, unknown> {
+function validateObservations(payload: unknown): FPDocumentObservations {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new AnalysisUpstreamError(422, "AI가 화면 관찰 결과를 올바르게 반환하지 않았습니다.");
   }
@@ -173,7 +174,23 @@ function validateObservations(payload: unknown): Record<string, unknown> {
     throw new AnalysisUpstreamError(422, "AI가 화면 관찰 결과를 올바르게 반환하지 않았습니다.");
   }
   if (result.screens.length > 100) throw new AnalysisUpstreamError(422, "화면 관찰 결과가 허용 범위를 초과했습니다.");
-  return result;
+  return result as unknown as FPDocumentObservations;
+}
+
+function bindObservationSourceRefs(
+  observations: FPDocumentObservations,
+  files: File[],
+): FPDocumentObservations {
+  const allowed = files.map((file) => safeFilename(file.name));
+  const allowedSet = new Set(allowed);
+  return {
+    ...observations,
+    screens: observations.screens.map((screen) => {
+      if (allowedSet.has(screen.sourceRef)) return screen;
+      if (allowed.length === 1) return { ...screen, sourceRef: allowed[0] };
+      throw new AnalysisUpstreamError(422, "AI 화면 관찰 결과의 파일 출처를 확인하지 못했습니다.");
+    }),
+  };
 }
 
 export async function analyzeFPObservations(
@@ -200,7 +217,7 @@ export async function analyzeFPObservations(
     schemaName: "fp_document_analysis",
     schema: FP_ANALYSIS_JSON_SCHEMA as unknown as Record<string, unknown>,
   });
-  return normalizeAnalysisPayload(candidates);
+  return groundAnalysisResult(normalizeAnalysisPayload(candidates), observations);
 }
 
 export async function analyzeFPDocuments(
@@ -214,10 +231,10 @@ export async function analyzeFPDocuments(
   const model = options.model ?? process.env.OPENAI_FP_MODEL ?? "gpt-5.6-terra";
   const fetchImpl = options.fetchImpl ?? fetch;
   const signal = options.signal ?? AbortSignal.timeout(180_000);
-  await validateFileContents(files);
+  await validateAnalysisFileContents(files);
   const fileContent = await Promise.all(files.map(fileToOpenAIContent));
 
-  const observations = validateObservations(await callStructuredResponse({
+  const observations = bindObservationSourceRefs(validateObservations(await callStructuredResponse({
     apiKey,
     model,
     fetchImpl,
@@ -229,7 +246,7 @@ export async function analyzeFPDocuments(
     ],
     schemaName: "fp_document_observations",
     schema: FP_OBSERVATION_JSON_SCHEMA as unknown as Record<string, unknown>,
-  }));
+  })), files);
 
   return analyzeFPObservations(observations, { apiKey, model, fetchImpl, signal });
 }

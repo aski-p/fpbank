@@ -128,6 +128,24 @@ describe("normalizeAnalysisPayload", () => {
     expect(result.items[0].reviewReasons).toContain("데이터 소유권 근거 부족");
   });
 
+  it("forces state-change review for EI without maintenance or behavior-change evidence", () => {
+    const result = normalizeAnalysisPayload({
+      documentSummary: "입력 화면",
+      items: [{
+        applicationName: "i-ONE Bank 3.0",
+        businessName: "가상자산 관리",
+        unitProcessName: "가상자산 입력",
+        fpType: "EI",
+        weight: 4,
+        confidence: 0.95,
+        evidence: "입력 필드와 확인 버튼",
+        rationale: "사용자가 값을 입력하는 화면",
+        needsReview: false,
+      }],
+    });
+    expect(result.items[0].reviewReasons).toContain("EI 데이터 유지·동작 변경 근거 부족");
+  });
+
   it("forces derivation review for EO without calculation evidence", () => {
     const result = normalizeAnalysisPayload({
       documentSummary: "조회 화면",
@@ -146,6 +164,60 @@ describe("normalizeAnalysisPayload", () => {
     expect(result.items[0].reviewReasons).toContain("EO 계산·파생 근거 부족");
   });
 
+  it("does not accept a chart label alone as EO derivation evidence", () => {
+    const result = normalizeAnalysisPayload({
+      documentSummary: "대시보드",
+      items: [{
+        applicationName: "i-ONE Bank 3.0",
+        businessName: "투자 현황",
+        unitProcessName: "투자 현황 차트 조회",
+        fpType: "EO",
+        weight: 5.2,
+        confidence: 0.92,
+        evidence: "투자 현황 차트 표시",
+        rationale: "분석 화면의 차트 출력",
+        needsReview: false,
+      }],
+    });
+    expect(result.items[0].reviewReasons).toContain("EO 계산·파생 근거 부족");
+  });
+
+  it("forces review when EQ evidence contains derived output logic", () => {
+    const result = normalizeAnalysisPayload({
+      documentSummary: "성과 조회",
+      items: [{
+        applicationName: "i-ONE Bank 3.0",
+        businessName: "투자 현황",
+        unitProcessName: "투자 성과 조회",
+        fpType: "EQ",
+        weight: 3.9,
+        confidence: 0.9,
+        evidence: "보유자산 합계와 수익률 산출 결과",
+        rationale: "조회 화면",
+        needsReview: false,
+      }],
+    });
+    expect(result.items[0].reviewReasons).toContain("EQ 파생 출력 근거 충돌");
+  });
+
+  it("forces review for UI navigation mislabeled as an elementary process", () => {
+    const result = normalizeAnalysisPayload({
+      documentSummary: "상세 화면",
+      items: [{
+        applicationName: "i-ONE Bank 3.0",
+        businessName: "투자 현황",
+        unitProcessName: "상세 탭 선택",
+        fpType: "EQ",
+        weight: 3.9,
+        confidence: 0.93,
+        evidence: "상세 탭 라벨",
+        rationale: "탭을 선택하면 화면 영역 전환",
+        needsReview: false,
+      }],
+    });
+    expect(result.items[0].reviewReasons).toContain("UI 조작을 단위프로세스로 오인 가능");
+  });
+
   it("marks same-process EQ/EO conflicts for review", () => {
     const base = {
       applicationName: "i-ONE Bank 3.0",
@@ -161,8 +233,88 @@ describe("normalizeAnalysisPayload", () => {
       documentSummary: "투자 현황",
       items: [{ ...base, fpType: "EQ" }, { ...base, fpType: "EO" }],
     });
-    expect(result.items).toHaveLength(2);
-    expect(result.items.every((candidate) => candidate.reviewReasons.includes("동일 프로세스 FP 유형 충돌"))).toBe(true);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ fpType: null, weight: 0, decisionStatus: "abstained", needsReview: true });
+    expect(result.items[0].reviewReasons).toContain("동일 프로세스 FP 유형 충돌");
+  });
+
+  it("merges differently named candidates with the same functional signature", () => {
+    const common = {
+      applicationName: "Bank App",
+      businessName: "회원 관리",
+      fpType: "EI",
+      weight: 4,
+      confidence: 0.9,
+      evidence: "저장 완료",
+      rationale: "회원 정보를 유지",
+      needsReview: false,
+      triggerEvidence: ["저장 버튼 선택"],
+      outcomeEvidence: ["저장 완료"],
+      readDataGroups: [],
+      maintainedDataGroups: ["회원 정보"],
+      derivationEvidence: [],
+      ownershipEvidence: [],
+    };
+    const result = normalizeAnalysisPayload({
+      documentSummary: "회원 화면",
+      items: [
+        { ...common, unitProcessName: "회원 등록", sourceRefs: ["page-1.png"] },
+        { ...common, unitProcessName: "회원 정보 저장", sourceRefs: ["page-2.png"] },
+      ],
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].sourceRefs).toEqual(["page-1.png", "page-2.png"]);
+    expect(result.warnings).toContain("기능 서명이 같은 후보 1건을 근거 병합했습니다.");
+  });
+
+  it("collapses ILF and EIF ownership conflicts for the same global data group", () => {
+    const common = {
+      applicationName: "Bank App",
+      businessName: "계좌 관리",
+      unitProcessName: "계좌 데이터",
+      weight: 0,
+      confidence: 0.9,
+      evidence: "계좌 데이터 그룹",
+      rationale: "소유권 판정",
+      needsReview: false,
+      sourceRefs: ["page-1.png"],
+      triggerEvidence: [],
+      outcomeEvidence: [],
+      derivationEvidence: [],
+    };
+    const result = normalizeAnalysisPayload({
+      documentSummary: "계좌 데이터",
+      items: [
+        { ...common, fpType: "ILF", maintainedDataGroups: ["계좌"], readDataGroups: [], ownershipEvidence: ["Bank App 유지"] },
+        { ...common, fpType: "EIF", maintainedDataGroups: [], readDataGroups: ["계좌"], ownershipEvidence: ["외부 시스템 유지"] },
+      ],
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ fpType: null, weight: 0, decisionStatus: "abstained" });
+    expect(result.items[0].reviewReasons).toContain("동일 데이터 그룹 ILF/EIF 소유권 충돌");
+  });
+
+  it("preserves UNKNOWN as an abstained zero-weight candidate", () => {
+    const result = normalizeAnalysisPayload({
+      documentSummary: "근거 부족 화면",
+      items: [{
+        applicationName: "i-ONE Bank 3.0",
+        businessName: "투자 현황",
+        unitProcessName: "투자 정보 처리",
+        fpType: "UNKNOWN",
+        confidence: 0.4,
+        evidence: "처리 결과가 화면에 명시되지 않음",
+        rationale: "EI/EO/EQ를 결정할 근거 부족",
+        needsReview: true,
+      }],
+    });
+    expect(result.items[0]).toMatchObject({
+      fpType: null,
+      weight: 0,
+      decisionStatus: "abstained",
+      needsReview: true,
+    });
+    expect(result.items[0].reviewReasons).toContain("FP 유형 판단 보류");
   });
 
   it("rejects malformed payloads and invalid FP types", () => {
@@ -183,6 +335,7 @@ describe("mergeAnalyzedItems", () => {
     evidence: "회원 등록 버튼",
     rationale: "회원 데이터 유지",
     needsReview: false,
+    decisionStatus: "accepted" as const,
     reviewReasons: [],
   };
 

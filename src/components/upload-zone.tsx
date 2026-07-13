@@ -1,18 +1,30 @@
 import { useRef, useState } from "react";
-import { FileSpreadsheet, UploadCloud } from "lucide-react";
+import { FileSpreadsheet, LoaderCircle, UploadCloud } from "lucide-react";
+import { validateExcelFile } from "@/lib/excel-file";
 
 interface Props {
-  onFileUpload: (file: File) => void;
+  onFileUpload: (file: File) => void | Promise<void>;
 }
 
 export function FpUploadZone({ onFileUpload }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function submitFile(file?: File) {
+  async function submitFile(file?: File) {
     if (!file) return;
-    onFileUpload(file);
-    if (inputRef.current) inputRef.current.value = "";
+    setError("");
+    try {
+      validateExcelFile(file);
+      setIsUploading(true);
+      await onFileUpload(file);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Excel 파일을 분석하지 못했습니다.");
+    } finally {
+      setIsUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
   }
 
   return (
@@ -52,11 +64,13 @@ export function FpUploadZone({ onFileUpload }: Props) {
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        className="fp-focus mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-[#151714] transition hover:bg-[#b9f56a] active:scale-[0.99] sm:w-auto"
+        disabled={isUploading}
+        className="fp-focus mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-[#151714] transition hover:bg-[#b9f56a] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
       >
-        <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
-        Excel 파일 선택
+        {isUploading ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />}
+        {isUploading ? "Excel 분석 중..." : "Excel 파일 선택"}
       </button>
+      {error && <p role="alert" className="mt-3 text-xs font-medium text-[#ffb4b4]">{error}</p>}
       <input
         ref={inputRef}
         type="file"

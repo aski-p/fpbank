@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   BrainCircuit,
@@ -21,6 +21,7 @@ import {
   type NormalizedFPAnalysisResult,
 } from "@/lib/fp-analysis";
 import type { AnalysisMode, AnalysisAccuracyReport } from "@/lib/analysis-mode";
+import { pollAnalysisJob, submitAnalysisJob, type ClientAnalysisJobStatus } from "@/lib/analysis-job-client";
 
 interface DocumentAnalysisZoneProps {
   onApply: (items: NormalizedFPAnalysisItem[]) => { addedCount: number; skippedCount: number };
@@ -36,15 +37,6 @@ interface AnalysisMetaBody {
   cloudError?: string;
 }
 
-interface ApiSuccessBody {
-  analysisMeta?: AnalysisMetaBody;
-}
-
-interface ApiErrorBody {
-  error?: string;
-  code?: string;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
@@ -58,14 +50,35 @@ const MODE_OPTIONS: Array<{ value: AnalysisMode; label: string; description: str
 
 export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const analysisAbortRef = useRef<AbortController | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [workerAvailable, setWorkerAvailable] = useState<boolean | null>(null);
+  const [jobStatus, setJobStatus] = useState<ClientAnalysisJobStatus | null>(null);
   const [mode, setMode] = useState<AnalysisMode>("auto");
   const [result, setResult] = useState<NormalizedFPAnalysisResult | null>(null);
   const [analysisMeta, setAnalysisMeta] = useState<AnalysisMetaBody | null>(null);
   const [error, setError] = useState("");
   const [applyMessage, setApplyMessage] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/analyze-fp/jobs", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return false;
+        const body = await response.json() as { available?: unknown };
+        return body.available === true;
+      })
+      .then(setWorkerAvailable)
+      .catch(() => {
+        if (!controller.signal.aborted) setWorkerAvailable(false);
+      });
+    return () => {
+      controller.abort();
+      analysisAbortRef.current?.abort();
+    };
+  }, []);
 
   function selectFiles(nextFiles: File[]) {
     setError("");
@@ -95,25 +108,27 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
     setResult(null);
     setAnalysisMeta(null);
     try {
+      if (workerAvailable !== true) {
+        throw new Error("정밀 분석 worker가 이 배포에 연결되지 않았습니다.");
+      }
       validateAnalysisFiles(files);
       setIsAnalyzing(true);
+      setJobStatus("queued");
+      const controller = new AbortController();
+      analysisAbortRef.current?.abort();
+      analysisAbortRef.current = controller;
       const formData = new FormData();
       formData.append("mode", mode);
       for (const file of files) formData.append("files", file);
 
-      const response = await fetch("/api/analyze-fp", {
-        method: "POST",
-        body: formData,
-        cache: "no-store",
+      const created = await submitAnalysisJob(formData, { signal: controller.signal });
+      const completed = await pollAnalysisJob(created.jobId, {
+        accessToken: created.accessToken,
+        signal: controller.signal,
+        onStatus: setJobStatus,
       });
-      const body = await response.json() as ApiErrorBody | unknown;
-      if (!response.ok) {
-        const apiError = body as ApiErrorBody;
-        throw new Error(apiError.error || "문서를 분석하지 못했습니다.");
-      }
-      const successBody = body as ApiSuccessBody;
-      setResult(normalizeAnalysisPayload(body));
-      setAnalysisMeta(successBody.analysisMeta ?? null);
+      setResult(normalizeAnalysisPayload(completed.result));
+      setAnalysisMeta(completed.meta);
     } catch (analysisError) {
       if (analysisError instanceof AnalysisValidationError || analysisError instanceof Error) {
         setError(analysisError.message);
@@ -122,6 +137,8 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
       }
     } finally {
       setIsAnalyzing(false);
+      setJobStatus(null);
+      analysisAbortRef.current = null;
     }
   }
 
@@ -140,6 +157,11 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
   }
 
   const reviewCount = result?.items.filter((item) => item.needsReview).length ?? 0;
+  const analysisStatusLabel = jobStatus === "queued"
+    ? "GPU 분석 대기열에서 순서를 기다리는 중입니다."
+    : jobStatus === "running"
+      ? "Qwen이 화면별 관찰·FP 판정·독립 감리를 수행 중입니다."
+      : "정밀 분석을 준비하고 있습니다.";
 
   return (
     <section className="mb-6 overflow-hidden rounded-[28px] border border-[#dfe3dc] bg-white">
@@ -226,14 +248,28 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
             </div>
           )}
 
+          {workerAvailable === false && (
+            <div role="status" className="mt-4 flex items-start gap-2 rounded-2xl bg-[#fff8e8] px-4 py-3 text-sm text-[#85641f]">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              정밀 분석 worker가 연결되지 않은 배포입니다. Excel 분석과 기능 직접 추가는 계속 사용할 수 있습니다.
+            </div>
+          )}
+
           {error && (
             <div role="alert" className="mt-4 flex items-start gap-2 rounded-2xl bg-[#fff1f1] px-4 py-3 text-sm text-[#b53f3f]">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}
             </div>
           )}
 
-          <button type="button" onClick={analyze} disabled={files.length === 0 || isAnalyzing} className="fp-focus mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#151714] px-6 text-sm font-semibold text-white transition hover:bg-[#2b2e29] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
-            {isAnalyzing ? <><LoaderCircle className="h-4 w-4 animate-spin" />정밀 분석 중...</> : <><ScanSearch className="h-4 w-4" />화면설계 분석</>}
+          {isAnalyzing && (
+            <div role="status" aria-live="polite" className="mt-4 flex items-center gap-3 rounded-2xl border border-[#dce8cf] bg-[#f4faed] px-4 py-3 text-sm text-[#4f6f35]">
+              <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" />
+              <div><p className="font-semibold">최대 정확도 분석 진행 중</p><p className="mt-0.5 text-xs text-[#718366]">{analysisStatusLabel}</p></div>
+            </div>
+          )}
+
+          <button type="button" onClick={analyze} disabled={files.length === 0 || isAnalyzing || workerAvailable !== true} className="fp-focus mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#151714] px-6 text-sm font-semibold text-white transition hover:bg-[#2b2e29] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
+            {isAnalyzing ? <><LoaderCircle className="h-4 w-4 animate-spin" />{jobStatus === "queued" ? "분석 대기 중..." : "Qwen 정밀 분석 중..."}</> : <><ScanSearch className="h-4 w-4" />화면설계 분석</>}
           </button>
 
           {result && (
@@ -286,10 +322,10 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
                       <tr key={`${item.applicationName}-${item.unitProcessName}-${index}`} className="border-t border-[#ecefe9] align-top">
                         <td className="px-4 py-3 font-medium">{item.applicationName}</td>
                         <td className="px-4 py-3">{item.businessName}</td>
-                        <td className="px-4 py-3"><p className="font-medium">{item.unitProcessName}</p><p className="mt-1 max-w-xs text-[11px] leading-4 text-[#858b82]">근거: {item.evidence || "없음"}</p></td>
-                        <td className="px-4 py-3"><span className="rounded-full bg-[#edf1e9] px-2.5 py-1 font-mono font-semibold">{item.fpType}</span></td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold">{item.weight.toFixed(1)}</td>
-                        <td className="px-4 py-3"><span className={item.needsReview ? "text-[#a47419]" : "text-[#4f872d]"}>{Math.round(item.confidence * 100)}%</span>{item.needsReview && <p className="mt-1 text-[10px] text-[#a47419]">검토 필요</p>}</td>
+                        <td className="px-4 py-3"><p className="font-medium">{item.unitProcessName}</p><p className="mt-1 max-w-xs text-[11px] leading-4 text-[#858b82]">근거: {item.evidence || "없음"}</p>{item.sourceRefs?.length ? <p className="mt-1 max-w-xs text-[10px] text-[#92988f]">출처: {item.sourceRefs.join(", ")}</p> : null}</td>
+                        <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 font-mono font-semibold ${item.fpType ? "bg-[#edf1e9]" : "bg-[#fff0d8] text-[#956515]"}`}>{item.fpType ?? "UNKNOWN"}</span></td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold">{item.fpType ? item.weight.toFixed(1) : "—"}</td>
+                        <td className="px-4 py-3"><span className={item.needsReview ? "text-[#a47419]" : "text-[#4f872d]"}>{Math.round(item.confidence * 100)}%</span>{item.needsReview && <p className="mt-1 max-w-[180px] text-[10px] leading-4 text-[#a47419]">{item.reviewReasons.join(", ") || "검토 필요"}</p>}</td>
                       </tr>
                     ))}
                   </tbody>
