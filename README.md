@@ -34,14 +34,18 @@ npm run build
 
 | 변수 | 설명 |
 |---|---|
-| `QWEN_API_BASE_URL` | Ollama/Qwen API 주소 |
-| `QWEN_MODEL` | 로컬 모델 이름 |
+| `QWEN_API_BASE_URL` | Ollama 또는 SGLang OpenAI-compatible API base URL |
+| `QWEN_API_MODE` | `ollama` 또는 `openai` |
+| `QWEN_FP_MODEL` | FP 분석에 사용할 로컬 모델 이름 |
 | `QWEN_API_TOKEN` | 선택적 Qwen Bearer token |
 | `QWEN_STAGE_TIMEOUT_MS` | Qwen 단계별 제한, 60초~30분 범위 |
 | `OPENAI_API_KEY` | cloud/auto 모드의 서버 전용 API key |
 | `OPENAI_FP_MODEL` | cloud 교차검증 모델 |
 | `FP_ANALYSIS_MEMORY_QUEUE_ENABLED` | production 단일 인스턴스에서만 메모리 queue를 명시적으로 활성화 |
 | `FP_ANALYSIS_ALLOW_NON_BROWSER` | production에서 Origin 없는 worker/API 요청을 명시적으로 허용 |
+| `FP_ANALYSIS_WORKER_BASE_URL` | Vercel이 전달할 별도 HTTPS worker 주소 |
+| `FP_ANALYSIS_WORKER_SHARED_SECRET` | Vercel과 worker가 공유하는 16자 이상 secret |
+| `FP_ANALYSIS_REQUIRE_WORKER_SECRET` | worker에서 공유 secret을 필수로 검증하려면 `true` |
 
 API key와 access token을 `NEXT_PUBLIC_*` 변수에 넣지 마세요.
 
@@ -64,7 +68,12 @@ Vercel에서는 요청이 서로 다른 isolate로 전달될 수 있으므로 pr
 
 ```bash
 FP_ANALYSIS_MEMORY_QUEUE_ENABLED=true
-QWEN_API_BASE_URL=http://qwen-host:11434
+FP_ANALYSIS_REQUIRE_WORKER_SECRET=true
+FP_ANALYSIS_WORKER_SHARED_SECRET=<shared-secret>
+QWEN_API_BASE_URL=http://sglang-host:30000/v1
+QWEN_API_MODE=openai
+QWEN_FP_MODEL=qwen3.6-35b-a3b-nvfp4
+QWEN_API_TOKEN=<sglang-or-proxy-token>
 npm start
 ```
 
@@ -72,7 +81,7 @@ npm start
 
 ### 공개 AI 분석 활성화 전 필수 구성
 
-공개 서비스에서는 메모리 queue를 사용하지 말고 다음을 먼저 구성해야 합니다.
+Vercel에서는 `FP_ANALYSIS_WORKER_BASE_URL`과 worker의 공유 secret을 설정하면 Job API를 별도 worker로 relay합니다. worker 자체는 단일 인스턴스 메모리 queue로 시작할 수 있지만, 공개 장기 운영에서는 다음 durable 구성으로 교체해야 합니다.
 
 1. Redis/SQS 등 durable queue
 2. object storage 기반 업로드 보관

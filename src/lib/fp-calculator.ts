@@ -35,19 +35,19 @@ export function classifyFPType(text: string): FPType {
   const lower = text.toLowerCase();
   const cleaned = lower.replace(/서비스|기능|처리|전환/g, '');
 
-  // EIF - 외부시스템/타사/본인인증 키워드
-  if (/[가-힣].*[참조|타?사|외부|동행|전행]|본인.*인증|간편인증|가족관계/.test(cleaned)) {
+  // EIF - 다른 애플리케이션/기관이 유지하는 데이터의 참조·연계가 명시된 경우만 허용
+  if (/(타\s*(시스템|기관|회사|행)|외부\s*(시스템|기관|회사)).*(참조|조회|연계|관리|유지)|외부\s*인터페이스|\bEIF\b/i.test(cleaned)) {
     return 'EIF';
+  }
+
+  // ILF - 내부 논리 데이터/원장/저장소. 일반적인 "데이터" 명칭을 EIF로 추측하지 않는다.
+  if (/(데이터|원장|저장소|상태\s*정보)\s*$/.test(cleaned)) {
+    return 'ILF';
   }
 
   // EO - 검증/발송/처리 포함 출력 (우선순위: IO/EI보다 높음)
   if (/검증|발송|확인|처리|알림|푸시|반영|채취/.test(cleaned)) {
     return 'EO';
-  }
-
-  // ILF - 정보 데이터, 원장 등 저장소 패턴 (우선순위 TOP)
-  if (/[가-힣].*정보[ ]?데이터|원장|저장|저장소|상태[ ]?정보/.test(cleaned)) {
-    return 'ILF';
   }
 
   // EI - 등록/수정/삭제/해지/변경 등 CRUD 패턴

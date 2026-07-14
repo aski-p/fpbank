@@ -1,3 +1,5 @@
+import { FP_WEIGHTS } from "@/lib/fp-calculator";
+import { PdfPageLimitError, renderPdfPages, type RenderedPdfPage } from "@/lib/pdf-page-renderer";
 import {
   AnalysisValidationError,
   FP_ANALYSIS_JSON_SCHEMA,
@@ -28,12 +30,16 @@ export interface LocalAnalysisBundle {
   result: NormalizedFPAnalysisResult;
 }
 
+export type LocalQwenApiMode = "ollama" | "openai";
+
 export interface LocalQwenOptions {
   baseUrl?: string;
   model?: string;
+  apiMode?: LocalQwenApiMode;
   apiToken?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  pdfRenderer?: (file: File) => Promise<RenderedPdfPage[]>;
 }
 
 export class LocalAnalysisConfigurationError extends Error {
@@ -62,6 +68,48 @@ export class LocalAnalysisError extends Error {
 
 function cleanBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
+}
+
+function qwenChatUrl(baseUrl: string, apiMode: LocalQwenApiMode): string {
+  if (apiMode === "ollama") return `${baseUrl}/api/chat`;
+  return `${baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`}/chat/completions`;
+}
+
+function openAIPayload(payload: Record<string, unknown>, imageMimeType: string): Record<string, unknown> {
+  const sourceMessages = Array.isArray(payload.messages) ? payload.messages : [];
+  const messages = sourceMessages.map((rawMessage) => {
+    if (!rawMessage || typeof rawMessage !== "object" || Array.isArray(rawMessage)) return rawMessage;
+    const message = rawMessage as Record<string, unknown>;
+    const images = Array.isArray(message.images) ? message.images.filter((image): image is string => typeof image === "string") : [];
+    if (images.length === 0) return { role: message.role, content: message.content };
+    return {
+      role: message.role,
+      content: [
+        { type: "text", text: String(message.content ?? "") },
+        ...images.map((image) => ({
+          type: "image_url",
+          image_url: { url: `data:${imageMimeType};base64,${image}` },
+        })),
+      ],
+    };
+  });
+  const generation = payload.options && typeof payload.options === "object" && !Array.isArray(payload.options)
+    ? payload.options as Record<string, unknown>
+    : {};
+  return {
+    model: payload.model,
+    stream: false,
+    messages,
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "fp_structured_output", strict: true, schema: payload.format },
+    },
+    chat_template_kwargs: { enable_thinking: payload.think === true },
+    temperature: generation.temperature ?? 0,
+    ...(typeof generation.top_p === "number" ? { top_p: generation.top_p } : {}),
+    ...(typeof generation.seed === "number" ? { seed: generation.seed } : {}),
+    max_tokens: generation.num_predict ?? 8_000,
+  };
 }
 
 function removeTrailingCommas(value: string): string {
@@ -156,6 +204,19 @@ function extractQwenContent(payload: unknown): string {
   return content;
 }
 
+function extractOpenAIContent(payload: unknown): string {
+  if (!payload || typeof payload !== "object") throw new LocalAnalysisError(502);
+  const choices = (payload as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") throw new LocalAnalysisError(502);
+  const message = (choices[0] as Record<string, unknown>).message;
+  if (!message || typeof message !== "object") throw new LocalAnalysisError(502);
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new LocalAnalysisError(422, "Qwen이 구조화된 결과를 반환하지 않았습니다.");
+  }
+  return content;
+}
+
 function validateObservations(payload: unknown): FPDocumentObservations {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new LocalAnalysisError(422, "Qwen 화면 관찰 결과가 올바르지 않습니다.");
@@ -234,6 +295,7 @@ function normalizeEvidence(value: string): string {
 
 export function groundAnalysisResult(result: NormalizedFPAnalysisResult, observations: FPDocumentObservations): NormalizedFPAnalysisResult {
   const evidenceBySource = new Map<string, string[]>();
+  const ownershipBySourceAndGroup = new Map<string, Set<"local" | "external" | "unknown">>();
   for (const screen of observations.screens) {
     const values = [
       screen.screenName, screen.menuPath, ...screen.visibleTexts, ...screen.notes,
@@ -241,6 +303,12 @@ export function groundAnalysisResult(result: NormalizedFPAnalysisResult, observa
       ...screen.dataGroups.flatMap((group) => [group.name, group.ownershipEvidence, group.maintainedHere]),
     ].map(normalizeEvidence).filter(Boolean);
     evidenceBySource.set(screen.sourceRef, [...(evidenceBySource.get(screen.sourceRef) ?? []), ...values]);
+    for (const group of screen.dataGroups) {
+      const key = `${screen.sourceRef}|${normalizeEvidence(group.name)}`;
+      const ownerships = ownershipBySourceAndGroup.get(key) ?? new Set<"local" | "external" | "unknown">();
+      ownerships.add(group.maintainedHere);
+      ownershipBySourceAndGroup.set(key, ownerships);
+    }
   }
 
   const items = result.items.map((item) => {
@@ -250,9 +318,36 @@ export function groundAnalysisResult(result: NormalizedFPAnalysisResult, observa
     const validRefs = sourceRefs.filter((sourceRef) => evidenceBySource.has(sourceRef));
     if (sourceRefs.length === 0 || validRefs.length !== sourceRefs.length) addReason("관찰 근거 출처 없음");
 
+    let fpType = item.fpType;
+    let readDataGroups = [...(item.readDataGroups ?? [])];
+    let maintainedDataGroups = [...(item.maintainedDataGroups ?? [])];
+    const observedOwnership = (groups: string[]) => {
+      const values = new Set<"local" | "external" | "unknown">();
+      for (const sourceRef of validRefs) {
+        for (const group of groups) {
+          for (const value of ownershipBySourceAndGroup.get(`${sourceRef}|${normalizeEvidence(group)}`) ?? []) values.add(value);
+        }
+      }
+      return values;
+    };
+    const ownerships = observedOwnership([...readDataGroups, ...maintainedDataGroups]);
+    if (fpType === "EIF" && ownerships.has("local") && !ownerships.has("external")) {
+      fpType = "ILF";
+      maintainedDataGroups = [...new Set([...maintainedDataGroups, ...readDataGroups])];
+      addReason("관찰 소유권에 따라 EIF를 ILF로 교정");
+    } else if (fpType === "ILF" && ownerships.has("external") && !ownerships.has("local")) {
+      fpType = "EIF";
+      readDataGroups = [...new Set([...readDataGroups, ...maintainedDataGroups])];
+      addReason("관찰 소유권에 따라 ILF를 EIF로 교정");
+    } else if (fpType === "EIF" && !ownerships.has("external")) {
+      addReason("EIF 외부 유지 소유권 미확인");
+    } else if (fpType === "ILF" && !ownerships.has("local")) {
+      addReason("ILF 내부 유지 소유권 미확인");
+    }
+
     const quotes = [
-      ...(item.triggerEvidence ?? []), ...(item.outcomeEvidence ?? []), ...(item.readDataGroups ?? []),
-      ...(item.maintainedDataGroups ?? []), ...(item.derivationEvidence ?? []), ...(item.ownershipEvidence ?? []),
+      ...(item.triggerEvidence ?? []), ...(item.outcomeEvidence ?? []), ...readDataGroups,
+      ...maintainedDataGroups, ...(item.derivationEvidence ?? []), ...(item.ownershipEvidence ?? []),
     ];
     const corpus = validRefs.flatMap((sourceRef) => evidenceBySource.get(sourceRef) ?? []);
     const unsupportedQuote = quotes.some((quote) => {
@@ -264,28 +359,32 @@ export function groundAnalysisResult(result: NormalizedFPAnalysisResult, observa
     });
     if (unsupportedQuote) addReason("관찰 JSON에 없는 판정 근거");
 
-    if (item.fpType === "EI" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || !(item.maintainedDataGroups?.length))) {
+    if (fpType === "EI" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || !maintainedDataGroups.length)) {
       addReason("EI 구조화 근거 부족");
     }
-    if (item.fpType === "EO" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || !(item.derivationEvidence?.length))) {
+    if (fpType === "EO" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || !(item.derivationEvidence?.length))) {
       addReason("EO 구조화 근거 부족");
     }
-    if (item.fpType === "EQ" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || (item.derivationEvidence?.length ?? 0) > 0)) {
+    if (fpType === "EQ" && (!(item.triggerEvidence?.length) || !(item.outcomeEvidence?.length) || (item.derivationEvidence?.length ?? 0) > 0)) {
       addReason("EQ 구조화 근거 부족");
     }
-    if (item.fpType === "ILF" && (!(item.maintainedDataGroups?.length) || !(item.ownershipEvidence?.length))) {
+    if (fpType === "ILF" && (!maintainedDataGroups.length || !(item.ownershipEvidence?.length))) {
       addReason("ILF 구조화 소유권 근거 부족");
     }
-    if (item.fpType === "EIF" && (!(item.readDataGroups?.length) || !(item.ownershipEvidence?.length))) {
+    if (fpType === "EIF" && (!readDataGroups.length || !(item.ownershipEvidence?.length))) {
       addReason("EIF 구조화 소유권 근거 부족");
     }
 
     const needsReview = reviewReasons.length > 0;
     return {
       ...item,
+      fpType,
+      weight: fpType ? FP_WEIGHTS[fpType] : 0,
+      readDataGroups,
+      maintainedDataGroups,
       reviewReasons,
       needsReview,
-      decisionStatus: item.fpType === null ? "abstained" as const : needsReview ? "review" as const : "accepted" as const,
+      decisionStatus: fpType === null ? "abstained" as const : needsReview ? "review" as const : "accepted" as const,
     };
   });
   return { ...result, items };
@@ -316,7 +415,15 @@ async function readBoundedResponse(response: Response): Promise<string> {
   return output + decoder.decode();
 }
 
-function extractStreamedQwenContent(text: string): string {
+function extractStreamedQwenContent(text: string, apiMode: LocalQwenApiMode): string {
+  if (apiMode === "openai") {
+    try {
+      return extractOpenAIContent(JSON.parse(text));
+    } catch (error) {
+      if (error instanceof LocalAnalysisError) throw error;
+      throw new LocalAnalysisError(502, "로컬 Qwen OpenAI 응답을 읽지 못했습니다.");
+    }
+  }
   try {
     return extractQwenContent(JSON.parse(text));
   } catch {
@@ -340,6 +447,8 @@ async function callQwen(
   url: string,
   payload: Record<string, unknown>,
   options: Pick<LocalQwenOptions, "apiToken" | "fetchImpl" | "signal">,
+  apiMode: LocalQwenApiMode,
+  imageMimeType = "image/png",
 ): Promise<string> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -354,11 +463,11 @@ async function callQwen(
     const response = await fetchImpl(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(apiMode === "openai" ? openAIPayload(payload, imageMimeType) : payload),
       signal,
     });
     if (!response.ok) throw new LocalAnalysisError(response.status);
-    return extractStreamedQwenContent(await readBoundedResponse(response));
+    return extractStreamedQwenContent(await readBoundedResponse(response), apiMode);
   } catch (error) {
     if (error instanceof LocalAnalysisError) throw error;
     if (options.signal?.aborted) throw new LocalAnalysisError(499, "로컬 Qwen 분석 요청이 취소되었습니다.");
@@ -374,8 +483,10 @@ async function requestStructuredQwen<T>(
   payload: Record<string, unknown>,
   validator: (value: unknown) => T,
   options: Pick<LocalQwenOptions, "apiToken" | "fetchImpl" | "signal">,
+  apiMode: LocalQwenApiMode,
+  imageMimeType = "image/png",
 ): Promise<T> {
-  const content = await callQwen(url, payload, options);
+  const content = await callQwen(url, payload, options, apiMode, imageMimeType);
   try {
     return validator(parseStructuredQwenContent(content));
   } catch (error) {
@@ -392,7 +503,7 @@ async function requestStructuredQwen<T>(
     }],
     format: payload.format,
     options: { temperature: 0, num_ctx: 32_768, num_predict: 8_000 },
-  }, options);
+  }, options, apiMode);
   return validator(parseStructuredQwenContent(repairContent));
 }
 
@@ -403,31 +514,47 @@ export async function analyzeFPDocumentsLocally(
   validateAnalysisFiles(files);
   const baseUrl = cleanBaseUrl(options.baseUrl ?? process.env.QWEN_API_BASE_URL ?? "");
   if (!baseUrl) throw new LocalAnalysisConfigurationError();
-  if (files.some((file) => file.type === "application/pdf")) {
-    throw new LocalAnalysisUnsupportedError("로컬 Qwen PDF 분석은 페이지 렌더러 설정 후 사용할 수 있습니다. 이미지로 업로드하거나 자동 검증 모드를 사용해주세요.");
-  }
-
   const model = options.model ?? process.env.QWEN_FP_MODEL ?? "qwen3.6:27b";
+  const configuredMode = options.apiMode ?? process.env.QWEN_API_MODE ?? "ollama";
+  if (configuredMode !== "ollama" && configuredMode !== "openai") {
+    throw new LocalAnalysisConfigurationError("로컬 Qwen API 모드는 ollama 또는 openai여야 합니다.");
+  }
+  const apiMode = configuredMode;
+  const chatUrl = qwenChatUrl(baseUrl, apiMode);
   const observationParts: Array<{ sourceRef: string; observations: FPDocumentObservations }> = [];
   for (const file of files) {
-    const image = await imageToBase64(file);
-    const observation = await requestStructuredQwen(`${baseUrl}/api/chat`, {
-      model,
-      stream: true,
-      think: false,
-      messages: [{
-        role: "user",
-        content: `${buildDocumentObservationInstructions()}\n현재 첨부 파일명은 ${JSON.stringify(file.name)}이다. 이 이미지 한 장의 보이는 사실만 추출하라.`,
-        images: [image],
-      }],
-      format: FP_OBSERVATION_JSON_SCHEMA,
-      options: { temperature: 0.05, num_ctx: 16_384, num_predict: 8_000 },
-    }, validateObservations, options);
-    observationParts.push({ sourceRef: file.name, observations: observation });
+    let visualSources: RenderedPdfPage[];
+    if (file.type === "application/pdf") {
+      try {
+        visualSources = await (options.pdfRenderer ?? renderPdfPages)(file);
+      } catch (error) {
+        if (error instanceof PdfPageLimitError) throw new LocalAnalysisUnsupportedError(error.message);
+        throw new LocalAnalysisError(422, "PDF 페이지를 이미지로 변환하지 못했습니다. 암호화 또는 손상 여부를 확인해주세요.");
+      }
+      if (visualSources.length === 0) throw new LocalAnalysisError(422, "PDF에 분석할 페이지가 없습니다.");
+    } else {
+      visualSources = [{ sourceRef: file.name, base64: await imageToBase64(file) }];
+    }
+
+    for (const visual of visualSources) {
+      const observation = await requestStructuredQwen(chatUrl, {
+        model,
+        stream: true,
+        think: false,
+        messages: [{
+          role: "user",
+          content: `${buildDocumentObservationInstructions()}\n현재 첨부 출처는 ${JSON.stringify(visual.sourceRef)}이다. 이 이미지 한 장의 보이는 사실만 추출하라.`,
+          images: [visual.base64],
+        }],
+        format: FP_OBSERVATION_JSON_SCHEMA,
+        options: { temperature: 0.05, num_ctx: 16_384, num_predict: 8_000 },
+      }, validateObservations, options, apiMode, file.type === "application/pdf" ? "image/png" : file.type);
+      observationParts.push({ sourceRef: visual.sourceRef, observations: observation });
+    }
   }
   const observations = mergeObservations(observationParts);
 
-  const result = await requestStructuredQwen(`${baseUrl}/api/chat`, {
+  const result = await requestStructuredQwen(chatUrl, {
     model,
     stream: true,
     think: true,
@@ -437,9 +564,9 @@ export async function analyzeFPDocumentsLocally(
     }],
     format: FP_ANALYSIS_JSON_SCHEMA,
     options: { temperature: 0, top_p: 0.1, seed: 42, num_ctx: 32_768, num_predict: 10_000 },
-  }, normalizeAnalysisPayload, options);
+  }, normalizeAnalysisPayload, options, apiMode);
 
-  const auditedResult = await requestStructuredQwen(`${baseUrl}/api/chat`, {
+  const auditedResult = await requestStructuredQwen(chatUrl, {
     model,
     stream: true,
     think: true,
@@ -467,7 +594,7 @@ ${JSON.stringify(result)}`,
     }],
     format: FP_ANALYSIS_JSON_SCHEMA,
     options: { temperature: 0, top_p: 0.1, seed: 42, num_ctx: 32_768, num_predict: 10_000 },
-  }, normalizeAnalysisPayload, options);
+  }, normalizeAnalysisPayload, options, apiMode);
 
   return { observations, result: groundAnalysisResult(auditedResult, observations) };
 }

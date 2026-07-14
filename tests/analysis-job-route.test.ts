@@ -25,6 +25,7 @@ afterEach(() => {
   clearAnalysisJobsForTests();
   clearAnalysisRateLimitsForTests();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("analysis job API", () => {
@@ -46,6 +47,68 @@ describe("analysis job API", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ code: "ANALYSIS_WORKER_UNAVAILABLE" });
     expect(formData).not.toHaveBeenCalled();
+  });
+
+  it("proxies availability, submission, and status to a configured remote worker", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("FP_ANALYSIS_MEMORY_QUEUE_ENABLED", "");
+    vi.stubEnv("FP_ANALYSIS_WORKER_BASE_URL", "https://worker.example");
+    vi.stubEnv("FP_ANALYSIS_WORKER_SHARED_SECRET", "worker-secret-value");
+    const jobId = crypto.randomUUID();
+    const accessToken = "a".repeat(43);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ available: true }))
+      .mockResolvedValueOnce(Response.json({ jobId, accessToken, status: "queued" }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ id: jobId, status: "completed", output }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const availability = await GET_COLLECTION();
+    expect(await availability.json()).toMatchObject({ available: true });
+
+    const form = new FormData();
+    form.append("mode", "local");
+    form.append("files", file());
+    const submission = await POST(new Request("https://fpbank.vercel.app/api/analyze-fp/jobs", {
+      method: "POST",
+      headers: { Origin: "https://fpbank.vercel.app" },
+      body: form,
+    }));
+    expect(submission.status).toBe(202);
+    expect(await submission.json()).toMatchObject({ jobId, status: "queued" });
+
+    const status = await GET(new Request(`https://fpbank.vercel.app/api/analyze-fp/jobs/${jobId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }), { params: Promise.resolve({ jobId }) });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ status: "completed", output });
+    expect(fetchMock.mock.calls[0][0]).toBe("https://worker.example/api/analyze-fp/jobs");
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("x-fp-worker-key")).toBe("worker-secret-value");
+    expect(fetchMock.mock.calls[2][0]).toBe(`https://worker.example/api/analyze-fp/jobs/${jobId}`);
+    const statusHeaders = new Headers(fetchMock.mock.calls[2][1]?.headers);
+    expect(statusHeaders.get("authorization")).toBe(`Bearer ${accessToken}`);
+    expect(statusHeaders.get("x-fp-worker-key")).toBe("worker-secret-value");
+    expect(fetchMock.mock.calls.map((call) => call[1]?.redirect)).toEqual(["error", "error", "error"]);
+  });
+
+  it("requires the shared secret when a production worker is configured as private", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("FP_ANALYSIS_MEMORY_QUEUE_ENABLED", "true");
+    vi.stubEnv("FP_ANALYSIS_REQUIRE_WORKER_SECRET", "true");
+    vi.stubEnv("FP_ANALYSIS_WORKER_SHARED_SECRET", "worker-secret-value");
+
+    const forbidden = await POST(requestWith(file()));
+    expect(forbidden.status).toBe(403);
+    expect(await forbidden.json()).toMatchObject({ code: "INVALID_WORKER_CREDENTIAL" });
+
+    const form = new FormData();
+    form.append("mode", "local");
+    form.append("files", file());
+    const accepted = await POST(new Request("https://worker.example/api/analyze-fp/jobs", {
+      method: "POST",
+      headers: { "x-fp-worker-key": "worker-secret-value" },
+      body: form,
+    }));
+    expect(accepted.status).toBe(202);
   });
 
   it("creates a queued job and returns no-store 202", async () => {

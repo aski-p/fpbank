@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateFP } from "@/lib/fp-calculator";
+import { calculateFP, classifyFPType } from "@/lib/fp-calculator";
 import type { FPItem } from "@/stores/fp-store";
 
 function item(id: string, weight: number): FPItem {
@@ -14,6 +14,19 @@ function item(id: string, weight: number): FPItem {
     remark: "",
   };
 }
+
+describe("classifyFPType", () => {
+  it("does not misclassify internal information data as EIF", () => {
+    expect(classifyFPType("투자관리 서비스 분석 인사이트 데이터")).toBe("ILF");
+    expect(classifyFPType("투자관리 서비스 전체 투자 현황 데이터")).toBe("ILF");
+    expect(classifyFPType("고객 상태정보 저장소")).toBe("ILF");
+  });
+
+  it("uses EIF only when another system ownership/reference is explicit", () => {
+    expect(classifyFPType("타시스템 고객정보 참조")).toBe("EIF");
+    expect(classifyFPType("외부기관 관리 데이터 연계")).toBe("EIF");
+  });
+});
 
 describe("calculateFP", () => {
   it("uses the IBK correction formula shown in the source Excel", () => {

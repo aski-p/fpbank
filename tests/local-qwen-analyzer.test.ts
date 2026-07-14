@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   LocalAnalysisConfigurationError,
-  LocalAnalysisUnsupportedError,
   analyzeFPDocumentsLocally,
   parseStructuredQwenContent,
 } from "@/lib/local-qwen-analyzer";
@@ -15,6 +14,15 @@ function ollamaResponse(value: unknown): Response {
     message: { role: "assistant", content: JSON.stringify(value) },
     prompt_eval_count: 100,
     eval_count: 50,
+  }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+function openAIResponse(value: unknown): Response {
+  return new Response(JSON.stringify({
+    choices: [{
+      finish_reason: "stop",
+      message: { role: "assistant", content: JSON.stringify(value) },
+    }],
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
@@ -78,6 +86,51 @@ describe("parseStructuredQwenContent", () => {
 });
 
 describe("analyzeFPDocumentsLocally", () => {
+  it("uses the SGLang OpenAI multimodal and strict structured-output contract", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(openAIResponse(observations))
+      .mockResolvedValueOnce(openAIResponse(candidates))
+      .mockResolvedValueOnce(openAIResponse(candidates));
+
+    const bundle = await analyzeFPDocumentsLocally([pngFile()], {
+      baseUrl: "http://qwen.local:30000/v1",
+      model: "qwen3.6-35b-a3b-nvfp4",
+      apiMode: "openai",
+      apiToken: "test-sglang-token",
+      fetchImpl,
+    });
+
+    expect(bundle.result.items[0]).toMatchObject({ fpType: "EI", weight: 4 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      "http://qwen.local:30000/v1/chat/completions",
+      "http://qwen.local:30000/v1/chat/completions",
+      "http://qwen.local:30000/v1/chat/completions",
+    ]);
+    expect(new Headers(fetchImpl.mock.calls[0][1].headers).get("authorization")).toBe("Bearer test-sglang-token");
+
+    const observationRequest = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(observationRequest).toMatchObject({
+      model: "qwen3.6-35b-a3b-nvfp4",
+      stream: false,
+      chat_template_kwargs: { enable_thinking: false },
+      response_format: { type: "json_schema", json_schema: { strict: true } },
+    });
+    expect(observationRequest.messages[0].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text" }),
+      expect.objectContaining({
+        type: "image_url",
+        image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) },
+      }),
+    ]));
+
+    for (const call of fetchImpl.mock.calls.slice(1)) {
+      const request = JSON.parse(String(call[1].body));
+      expect(request.chat_template_kwargs).toEqual({ enable_thinking: true });
+      expect(JSON.stringify(request.messages)).not.toContain("image_url");
+    }
+  });
+
   it("uses Qwen observation and judge passes and normalizes weights", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(ndjsonOllamaResponse(observations))
@@ -138,6 +191,30 @@ describe("analyzeFPDocumentsLocally", () => {
       expect.objectContaining({ sourceRef: "page-1.png", screenName: "전체 투자 현황" }),
       expect.objectContaining({ sourceRef: "page-2.png", screenName: "가상자산 등록" }),
     ]));
+  });
+
+  it("corrects EIF to ILF when the observed data group is maintained locally", async () => {
+    const misclassified = {
+      ...candidates,
+      items: [{
+        ...candidates.items[0],
+        fpType: "EIF",
+        sourceRefs: ["screen.png"],
+        readDataGroups: ["가상자산 연결정보"],
+        maintainedDataGroups: [],
+        ownershipEvidence: ["등록·수정·삭제 화면"],
+      }],
+    };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ollamaResponse(observations))
+      .mockResolvedValueOnce(ollamaResponse(misclassified))
+      .mockResolvedValueOnce(ollamaResponse(misclassified));
+
+    const bundle = await analyzeFPDocumentsLocally([pngFile()], { baseUrl: "http://qwen.local", fetchImpl });
+
+    expect(bundle.result.items[0]).toMatchObject({ fpType: "ILF", weight: 7.5, needsReview: true });
+    expect(bundle.result.items[0].maintainedDataGroups).toContain("가상자산 연결정보");
+    expect(bundle.result.items[0].reviewReasons).toContain("관찰 소유권에 따라 EIF를 ILF로 교정");
   });
 
   it("uses the independent audit as the final normalized decision", async () => {
@@ -207,10 +284,28 @@ describe("analyzeFPDocumentsLocally", () => {
       .rejects.toBeInstanceOf(LocalAnalysisConfigurationError);
   });
 
-  it("rejects PDFs until local page rendering is configured", async () => {
-    const pdf = new File(["%PDF-1.7"], "design.pdf", { type: "application/pdf" });
-    await expect(analyzeFPDocumentsLocally([pdf], { baseUrl: "http://qwen.local" }))
-      .rejects.toBeInstanceOf(LocalAnalysisUnsupportedError);
+  it("renders PDF pages and binds evidence to page-qualified source references", async () => {
+    const pdfFile = new File(["%PDF-1.7"], "design.pdf", { type: "application/pdf" });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ollamaResponse(observations))
+      .mockResolvedValueOnce(ollamaResponse(candidates))
+      .mockResolvedValueOnce(ollamaResponse(candidates));
+    const pdfRenderer = vi.fn().mockResolvedValue([
+      { sourceRef: "design.pdf#page=1", base64: "iVBORw0KGgo=" },
+    ]);
+
+    const bundle = await analyzeFPDocumentsLocally([pdfFile], {
+      baseUrl: "http://qwen.local",
+      fetchImpl,
+      pdfRenderer,
+    });
+
+    expect(pdfRenderer).toHaveBeenCalledWith(pdfFile);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(bundle.observations.screens[0].sourceRef).toBe("design.pdf#page=1");
+    const request = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(request.messages[0].content).toContain("design.pdf#page=1");
+    expect(request.messages[0].images).toEqual(["iVBORw0KGgo="]);
   });
 
   it("distinguishes timeout, caller cancellation, and connection failures", async () => {

@@ -5,6 +5,7 @@ import {
   clearAnalysisRateLimitsForTests,
   consumeAnalysisRateLimit,
   hasValidRequestOrigin,
+  hasValidWorkerCredential,
 } from "@/lib/analysis-api-guard";
 
 beforeEach(() => clearAnalysisRateLimitsForTests());
@@ -23,6 +24,9 @@ describe("analysis API guard", () => {
     expect(hasValidRequestOrigin(new Request("https://fpbank.vercel.app/api", {
       headers: { host: "fpbank.vercel.app", origin: "https://evil.example" },
     }))).toBe(false);
+    expect(hasValidRequestOrigin(new Request("https://fpbank.vercel.app/api", {
+      headers: { host: "fpbank.vercel.app", origin: "http://fpbank.vercel.app" },
+    }))).toBe(false);
   });
 
   it("rejects missing Origin in production unless non-browser access is explicitly enabled", () => {
@@ -32,6 +36,31 @@ describe("analysis API guard", () => {
       NODE_ENV: "production",
       FP_ANALYSIS_ALLOW_NON_BROWSER: "true",
     })).toBe(true);
+  });
+
+  it("validates a presented worker secret independently of whether it is mandatory", () => {
+    const environment = {
+      NODE_ENV: "production",
+      FP_ANALYSIS_WORKER_SHARED_SECRET: "worker-secret-value",
+    };
+    expect(hasValidWorkerCredential(new Request("https://worker.example/api", {
+      headers: { "x-fp-worker-key": "worker-secret-value" },
+    }), environment)).toBe(true);
+    expect(hasValidWorkerCredential(new Request("https://worker.example/api"), environment)).toBe(false);
+    expect(hasValidWorkerCredential(new Request("https://worker.example/api", {
+      headers: { "x-fp-worker-key": "wrong-secret-value" },
+    }), environment)).toBe(false);
+    const unicodeCredentialRequest = {
+      headers: { get: (name: string) => name.toLowerCase() === "x-fp-worker-key" ? "123456789012345가" : null },
+    } as unknown as Request;
+    expect(() => hasValidWorkerCredential(
+      unicodeCredentialRequest,
+      { FP_ANALYSIS_WORKER_SHARED_SECRET: "1234567890123456" },
+    )).not.toThrow();
+    expect(hasValidWorkerCredential(
+      unicodeCredentialRequest,
+      { FP_ANALYSIS_WORKER_SHARED_SECRET: "1234567890123456" },
+    )).toBe(false);
   });
 
   it("limits one client to three job creations per 15 minutes", () => {

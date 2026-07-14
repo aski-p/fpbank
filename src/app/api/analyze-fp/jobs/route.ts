@@ -3,7 +3,14 @@ import { AnalysisValidationError, validateAnalysisFiles } from "@/lib/fp-analysi
 import { parseAnalysisMode } from "@/lib/analysis-mode";
 import { validateAnalysisFileContents } from "@/lib/fp-document-analyzer";
 import { AnalysisJobQueueFullError, createAnalysisJob, waitForAnalysisJob } from "@/lib/analysis-job-store";
-import { analysisMemoryQueueEnabled, consumeAnalysisRateLimit, hasValidRequestOrigin } from "@/lib/analysis-api-guard";
+import {
+  analysisMemoryQueueEnabled,
+  consumeAnalysisRateLimit,
+  hasValidRequestOrigin,
+  hasValidWorkerCredential,
+  workerCredentialRequired,
+} from "@/lib/analysis-api-guard";
+import { getAnalysisRemoteWorkerConfig, remoteWorkerHeaders, remoteWorkerUrl } from "@/lib/analysis-worker-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,19 +22,54 @@ function jsonError(error: string, code: string, status: number) {
   return NextResponse.json({ error, code }, { status, headers: NO_STORE_HEADERS });
 }
 
+async function relayRemoteResponse(response: Response): Promise<NextResponse> {
+  const contentType = response.headers.get("content-type") ?? "application/json";
+  const body = await response.arrayBuffer();
+  return new NextResponse(body, {
+    status: response.status,
+    headers: { ...NO_STORE_HEADERS, "Content-Type": contentType },
+  });
+}
+
 export async function GET() {
-  const available = analysisMemoryQueueEnabled();
+  if (analysisMemoryQueueEnabled()) {
+    return NextResponse.json({ available: true, reason: null }, { headers: NO_STORE_HEADERS });
+  }
+  const remote = getAnalysisRemoteWorkerConfig();
+  if (remote) {
+    try {
+      const response = await fetch(remoteWorkerUrl(remote, "/api/analyze-fp/jobs"), {
+        cache: "no-store",
+        headers: remoteWorkerHeaders(remote),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.ok) {
+        const body = await response.json() as { available?: unknown };
+        if (body.available === true) return NextResponse.json({ available: true, reason: null }, { headers: NO_STORE_HEADERS });
+      }
+    } catch {
+      // Report the worker as unavailable without exposing upstream details.
+    }
+  }
   return NextResponse.json({
-    available,
-    reason: available ? null : "정밀 분석 worker가 이 배포에 연결되지 않았습니다.",
+    available: false,
+    reason: "정밀 분석 worker가 이 배포에 연결되지 않았습니다.",
   }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(request: Request) {
-  if (!analysisMemoryQueueEnabled()) {
+  const localQueueEnabled = analysisMemoryQueueEnabled();
+  const remote = localQueueEnabled ? undefined : getAnalysisRemoteWorkerConfig();
+  if (!localQueueEnabled && !remote) {
     return jsonError("이 배포에서는 정밀 분석 worker가 활성화되지 않았습니다.", "ANALYSIS_WORKER_UNAVAILABLE", 503);
   }
-  if (!hasValidRequestOrigin(request)) {
+  const requiresWorkerCredential = workerCredentialRequired();
+  const trustedWorkerRequest = hasValidWorkerCredential(request);
+  if (localQueueEnabled && requiresWorkerCredential && !trustedWorkerRequest) {
+    return jsonError("worker 인증 정보가 올바르지 않습니다.", "INVALID_WORKER_CREDENTIAL", 403);
+  }
+  if (!trustedWorkerRequest && !hasValidRequestOrigin(request)) {
     return jsonError("허용되지 않은 요청 출처입니다.", "INVALID_ORIGIN", 403);
   }
   const rate = consumeAnalysisRateLimit(request);
@@ -50,8 +92,25 @@ export async function POST(request: Request) {
   try {
     validateAnalysisFiles(files);
     await validateAnalysisFileContents(files);
+    if (remote) {
+      try {
+        const forwardedFor = request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? "";
+        const headers = remoteWorkerHeaders(remote, forwardedFor ? { "x-forwarded-for": forwardedFor } : {});
+        const response = await fetch(remoteWorkerUrl(remote, "/api/analyze-fp/jobs"), {
+          method: "POST",
+          body: formData,
+          cache: "no-store",
+          headers,
+          redirect: "error",
+          signal: AbortSignal.timeout(60_000),
+        });
+        return relayRemoteResponse(response);
+      } catch {
+        return jsonError("정밀 분석 worker에 연결하지 못했습니다.", "ANALYSIS_WORKER_UNAVAILABLE", 503);
+      }
+    }
     const job = createAnalysisJob(files, mode);
-    if (process.env.NODE_ENV !== "test") after(() => waitForAnalysisJob(job.id));
+    if (process.env.NODE_ENV !== "test" && process.env.NEXT_RUNTIME === "nodejs") after(() => waitForAnalysisJob(job.id));
     return NextResponse.json(
       { jobId: job.id, accessToken: job.accessToken, status: job.status, createdAt: job.createdAt },
       { status: 202, headers: NO_STORE_HEADERS },

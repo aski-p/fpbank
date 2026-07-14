@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 interface RateEntry {
   count: number;
   resetAt: number;
@@ -24,6 +26,24 @@ export function analysisMemoryQueueEnabled(
   return environment.NODE_ENV !== "production" || environment.FP_ANALYSIS_MEMORY_QUEUE_ENABLED === "true";
 }
 
+export function workerCredentialRequired(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  return environment.FP_ANALYSIS_REQUIRE_WORKER_SECRET === "true";
+}
+
+export function hasValidWorkerCredential(
+  request: Request,
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  const expected = environment.FP_ANALYSIS_WORKER_SHARED_SECRET?.trim() ?? "";
+  const supplied = request.headers.get("x-fp-worker-key")?.trim() ?? "";
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  if (expected.length < 16 || suppliedBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
 export function hasValidRequestOrigin(
   request: Request,
   environment: Record<string, string | undefined> = process.env,
@@ -36,7 +56,10 @@ export function hasValidRequestOrigin(
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const host = forwardedHost || request.headers.get("host") || new URL(request.url).host;
   try {
-    return new URL(origin).host === host;
+    const originUrl = new URL(origin);
+    const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+    const expectedProtocol = forwardedProtocol ? `${forwardedProtocol}:` : new URL(request.url).protocol;
+    return originUrl.host === host && originUrl.protocol === expectedProtocol;
   } catch {
     return false;
   }
