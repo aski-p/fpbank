@@ -24,6 +24,7 @@ export interface FPItem {
   fpType: FPType;        // 자동 분류된 유형
   weight: number;        // 할당된 가중치
   remark?: string;       // 비고
+  included?: boolean;    // FP 합산 포함 여부
 }
 
 /**
@@ -93,6 +94,7 @@ export function addItem(
  */
 export interface FPResult {
   items: FPItem[];
+  includedItems: FPItem[];
   totalFP: number;
   fpByType: Record<FPType, { count: number; totalFp: number }>;
   adjustedFP: number;
@@ -103,21 +105,22 @@ const ADJUSTED_SHARE = 0.43;
 const BASE_SHARE = 0.57;
 
 export function calculateFP(items: FPItem[]): FPResult {
+  const includedItems = items.filter((item) => item.included !== false);
   const fpByType: Record<string, { count: number; totalFp: number }> = {};
   
   for (const type in FP_WEIGHTS) {
-    const typedItems = items.filter(i => i.fpType === type);
+    const typedItems = includedItems.filter(i => i.fpType === type);
     fpByType[type] = {
       count: typedItems.length,
       totalFp: Math.round(typedItems.reduce((s, i) => s + i.weight, 0) * 10) / 10,
     };
   }
 
-  const rawTotalFP = items.reduce((sum, item) => sum + item.weight, 0);
+  const rawTotalFP = includedItems.reduce((sum, item) => sum + item.weight, 0);
   const totalFP = Math.round(rawTotalFP * 100) / 100;
   const adjustedFP = Math.round(rawTotalFP * (ADJUSTED_SHARE * ADJUSTMENT_COEFFICIENT + BASE_SHARE) * 100) / 100;
 
-  return { items, totalFP, fpByType: fpByType as Record<FPType, { count: number; totalFp: number }>, adjustedFP };
+  return { items, includedItems, totalFP, fpByType: fpByType as Record<FPType, { count: number; totalFp: number }>, adjustedFP };
 }
 
 /** FP 유형 label/색상 */

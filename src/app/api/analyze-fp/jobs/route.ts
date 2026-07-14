@@ -18,6 +18,10 @@ export const maxDuration = 1800;
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store, max-age=0" };
 
+function cloudVerificationAvailable(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY?.trim());
+}
+
 function jsonError(error: string, code: string, status: number) {
   return NextResponse.json({ error, code }, { status, headers: NO_STORE_HEADERS });
 }
@@ -33,7 +37,11 @@ async function relayRemoteResponse(response: Response): Promise<NextResponse> {
 
 export async function GET() {
   if (analysisMemoryQueueEnabled()) {
-    return NextResponse.json({ available: true, reason: null }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({
+      available: true,
+      cloudAvailable: cloudVerificationAvailable(),
+      reason: null,
+    }, { headers: NO_STORE_HEADERS });
   }
   const remote = getAnalysisRemoteWorkerConfig();
   if (remote) {
@@ -45,8 +53,14 @@ export async function GET() {
         signal: AbortSignal.timeout(10_000),
       });
       if (response.ok) {
-        const body = await response.json() as { available?: unknown };
-        if (body.available === true) return NextResponse.json({ available: true, reason: null }, { headers: NO_STORE_HEADERS });
+        const body = await response.json() as { available?: unknown; cloudAvailable?: unknown };
+        if (body.available === true) {
+          return NextResponse.json({
+            available: true,
+            cloudAvailable: body.cloudAvailable === true,
+            reason: null,
+          }, { headers: NO_STORE_HEADERS });
+        }
       }
     } catch {
       // Report the worker as unavailable without exposing upstream details.
@@ -54,6 +68,7 @@ export async function GET() {
   }
   return NextResponse.json({
     available: false,
+    cloudAvailable: false,
     reason: "정밀 분석 worker가 이 배포에 연결되지 않았습니다.",
   }, { headers: NO_STORE_HEADERS });
 }
@@ -89,6 +104,9 @@ export async function POST(request: Request) {
 
   const files = formData.getAll("files").filter((value): value is File => value instanceof File);
   const mode = parseAnalysisMode(formData.get("mode"));
+  if (localQueueEnabled && mode !== "local" && !cloudVerificationAvailable()) {
+    return jsonError("Terra 검증 API가 설정되지 않았습니다. 로컬 전용 모드를 사용해주세요.", "CLOUD_VERIFICATION_UNAVAILABLE", 503);
+  }
   try {
     validateAnalysisFiles(files);
     await validateAnalysisFileContents(files);

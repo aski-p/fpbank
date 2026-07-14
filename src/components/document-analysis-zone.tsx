@@ -17,6 +17,7 @@ import {
   AnalysisValidationError,
   normalizeAnalysisPayload,
   validateAnalysisFiles,
+  ANALYSIS_FILE_LIMITS,
   type NormalizedFPAnalysisItem,
   type NormalizedFPAnalysisResult,
 } from "@/lib/fp-analysis";
@@ -55,8 +56,9 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [workerAvailable, setWorkerAvailable] = useState<boolean | null>(null);
+  const [cloudAvailable, setCloudAvailable] = useState<boolean | null>(null);
   const [jobStatus, setJobStatus] = useState<ClientAnalysisJobStatus | null>(null);
-  const [mode, setMode] = useState<AnalysisMode>("auto");
+  const [mode, setMode] = useState<AnalysisMode>("local");
   const [result, setResult] = useState<NormalizedFPAnalysisResult | null>(null);
   const [analysisMeta, setAnalysisMeta] = useState<AnalysisMetaBody | null>(null);
   const [error, setError] = useState("");
@@ -66,13 +68,19 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
     const controller = new AbortController();
     fetch("/api/analyze-fp/jobs", { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) return false;
-        const body = await response.json() as { available?: unknown };
-        return body.available === true;
+        if (!response.ok) return { worker: false, cloud: false };
+        const body = await response.json() as { available?: unknown; cloudAvailable?: unknown };
+        return { worker: body.available === true, cloud: body.cloudAvailable === true };
       })
-      .then(setWorkerAvailable)
+      .then(({ worker, cloud }) => {
+        setWorkerAvailable(worker);
+        setCloudAvailable(cloud);
+      })
       .catch(() => {
-        if (!controller.signal.aborted) setWorkerAvailable(false);
+        if (!controller.signal.aborted) {
+          setWorkerAvailable(false);
+          setCloudAvailable(false);
+        }
       });
     return () => {
       controller.abort();
@@ -181,7 +189,7 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
           <div className="mt-6 space-y-3 text-xs text-[#656c63]">
             <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-[#65983e]" />유형별 가중치 서버 재검증</div>
             <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-[#65983e]" />근거와 신뢰도 함께 제공</div>
-            <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-[#65983e]" />기존 분석표 중복 자동 제거</div>
+            <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-[#65983e]" />중복 후보 표시·FP 합산 선택</div>
           </div>
         </div>
 
@@ -191,21 +199,25 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
             <div className="grid gap-2 sm:grid-cols-3">
               {MODE_OPTIONS.map((option) => {
                 const selected = mode === option.value;
+                const cloudModeUnavailable = option.value !== "local" && cloudAvailable !== true;
                 return (
                   <button
                     key={option.value}
                     type="button"
                     aria-pressed={selected}
-                    disabled={isAnalyzing}
+                    disabled={isAnalyzing || cloudModeUnavailable}
                     onClick={() => { setMode(option.value); setResult(null); setAnalysisMeta(null); setApplyMessage(""); }}
-                    className={`fp-focus rounded-2xl border px-4 py-3 text-left transition ${selected ? "border-[#8bbd53] bg-[#eff9e4]" : "border-[#dfe3dc] bg-white hover:border-[#b9c1b5]"}`}
+                    className={`fp-focus rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${selected ? "border-[#8bbd53] bg-[#eff9e4]" : "border-[#dfe3dc] bg-white hover:border-[#b9c1b5]"}`}
                   >
-                    <span className="block text-sm font-semibold">{option.label}</span>
+                    <span className="block text-sm font-semibold">{option.label}{cloudModeUnavailable ? " · API 키 미설정" : ""}</span>
                     <span className="mt-1 block text-[11px] leading-4 text-[#7b8278]">{option.description}</span>
                   </button>
                 );
               })}
             </div>
+            {cloudAvailable === false && (
+              <p className="mt-2 text-xs text-[#8a6518]">Terra API 키가 없어 현재는 Qwen 로컬 전용 분석만 사용할 수 있습니다.</p>
+            )}
           </fieldset>
 
           <div
@@ -225,7 +237,9 @@ export function DocumentAnalysisZone({ onApply }: DocumentAnalysisZoneProps) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold">이미지 또는 PDF를 놓아주세요</p>
-                  <p className="mt-1 text-xs text-[#899087]">PNG · JPG · WebP · PDF / 최대 8개 · 전체 25MB</p>
+                  <p className="mt-1 text-xs text-[#899087]">
+                    PNG · JPG · WebP · PDF / 최대 {ANALYSIS_FILE_LIMITS.maxFiles}개 · 파일당 {ANALYSIS_FILE_LIMITS.maxFileBytes / 1024 / 1024}MB · 전체 {ANALYSIS_FILE_LIMITS.maxTotalBytes / 1024 / 1024}MB
+                  </p>
                 </div>
               </div>
               <button type="button" onClick={() => inputRef.current?.click()} disabled={isAnalyzing} className="fp-focus h-11 rounded-full border border-[#d8ddd4] bg-white px-5 text-sm font-semibold transition hover:border-[#a9b2a4] disabled:opacity-50">

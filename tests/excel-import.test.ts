@@ -9,7 +9,7 @@ const rows: unknown[][] = [
   [null, "i-ONE Bank 3.0", "투자관리 서비스 전체 투자 현황", "전체 투자 현황 데이터", "전체 투자 현황 데이터 유지", "ILF", 7.5],
   [null, "i-ONE Bank 3.0", "투자관리 서비스 전체 투자 현황", "전체 투자 현황 조회", "전체 투자 현황 정보 조회", "EQ", 3.9],
   ["DD", "i-ONE Bank 3.0", "투자관리 서비스 전체 투자 현황", "전체 투자 현황 처리", "전체 투자 현황 정보 처리", "EO", 5.2],
-  [null, "i-ONE Bank 3.0", "제외 대상", "빈 가중치", "빈 가중치", "EQ", null],
+  [null, "i-ONE Bank 3.0", "제외 대상", "빈 가중치", "빈 가중치", "EQ", null, "중복 발생"],
   [null, "i-ONE Bank 3.0", "제외 대상", "0 가중치", "0 가중치", "EQ", 0],
   [null, "i-ONE Bank 3.0", "제외 대상", "음수 가중치", "음수 가중치", "EQ", -3.9],
   [null, "i-ONE Bank 3.0", "제외 대상", "프로세스명만 있음", null, "EQ", 3.9],
@@ -23,7 +23,7 @@ describe("parseFPExcelRows", () => {
     let id = 0;
     const parsed = parseFPExcelRows(rows, () => `item-${++id}`);
 
-    expect(parsed).toHaveLength(4);
+    expect(parsed).toHaveLength(5);
     expect(parsed[0]).toMatchObject({
       appName: "i-ONE Bank 3.0",
       businessName: "투자관리 서비스 전체 투자 현황",
@@ -39,7 +39,14 @@ describe("parseFPExcelRows", () => {
       fpType: "EO",
       weight: 5.2,
     });
-    expect(parsed[3]).toMatchObject({ fpType: "EI", weight: 1234.5 });
+    expect(parsed[3]).toMatchObject({
+      processName: "빈 가중치",
+      fpType: "EQ",
+      weight: 3.9,
+      included: false,
+      remark: expect.stringContaining("중복 발생"),
+    });
+    expect(parsed[4]).toMatchObject({ fpType: "EI", weight: 1234.5, included: true });
   });
 
   it("rejects sheets without the FP table header instead of treating metadata as items", () => {

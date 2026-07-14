@@ -3,30 +3,44 @@ import { Check, Pencil, Trash2 } from "lucide-react";
 import type { FPItem, FPType } from "@/stores/fp-store";
 import { FP_WEIGHTS } from "@/lib/fp-calculator";
 import { getFPItemDisplayName } from "@/lib/fp-item-display";
+import type { DuplicateCandidate } from "@/lib/fp-duplicates";
 
 interface DataTableProps {
   items: FPItem[];
   editId: string | null;
   setEditId: (id: string | null) => void;
   removeItem: (id: string) => void;
-  updateItem: (id: string, key: keyof FPItem, value: string | number) => void;
+  updateItem: (id: string, key: keyof FPItem, value: string | number | boolean) => void;
+  toggleItemIncluded: (id: string) => void;
+  duplicateCandidates: ReadonlyMap<string, DuplicateCandidate>;
 }
 
 const TYPES: FPType[] = ["ILF", "EIF", "EQ", "EI", "EO"];
 
-export function DataTable({ items, editId, setEditId, removeItem, updateItem }: DataTableProps) {
+export function DataTable({ items, editId, setEditId, removeItem, updateItem, toggleItemIncluded, duplicateCandidates }: DataTableProps) {
   const inputClass = "fp-focus h-10 w-full min-w-[120px] rounded-xl border border-[#cfd5ca] bg-white px-3 text-sm outline-none focus:border-[#8ecb4e]";
+  const includedCount = items.filter((item) => item.included !== false).length;
+  const duplicateGroupCount = new Set(Array.from(duplicateCandidates.values(), (candidate) => candidate.groupId)).size;
 
   return (
     <div>
       <div className="divide-y divide-[#eceee9] sm:hidden">
         {items.map((item, index) => {
           const isEditing = editId === item.id;
+          const included = item.included !== false;
+          const duplicate = duplicateCandidates.get(item.id);
           return (
-            <article key={item.id} className={`p-5 ${isEditing ? "bg-[#f7fbef]" : "bg-white"}`}>
+            <article key={item.id} className={`p-5 transition ${isEditing ? "bg-[#f7fbef]" : "bg-white"} ${included ? "" : "opacity-55"}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <p className="font-mono text-[10px] text-[#9a9f97]">{String(index + 1).padStart(2, "0")} · {item.appName}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[#596057]">
+                      <input type="checkbox" checked={included} onChange={() => toggleItemIncluded(item.id)} aria-label={`${index + 1}번 항목 FP 합산 포함`} className="h-4 w-4 accent-[#6fa936]" />
+                      FP 합산
+                    </label>
+                    {duplicate && <span title={duplicate.reason} className="rounded-full bg-[#fff1cf] px-2 py-1 text-[10px] font-semibold text-[#8a6518]">중복 가능 {duplicate.groupId}</span>}
+                  </div>
+                  <p className="mt-2 font-mono text-[10px] text-[#9a9f97]">{String(index + 1).padStart(2, "0")} · {item.appName}</p>
                   {isEditing ? (
                     <fieldset data-mobile-item-editor="true" className="mt-2 space-y-2" aria-label={`${index + 1}번 항목 명칭 편집`}>
                       <input className={inputClass} value={item.appName} onChange={(event) => updateItem(item.id, "appName", event.target.value)} aria-label={`${index + 1}번 애플리케이션명`} />
@@ -61,7 +75,7 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
                   ) : (
                     <span className="inline-flex rounded-full bg-[#edf1e9] px-3 py-1.5 font-mono text-[11px] font-semibold text-[#4a5146]">{item.fpType}</span>
                   )}
-                  <p className="mt-2 font-mono text-xs font-semibold text-[#5f655c]">{item.weight.toFixed(1)} FP</p>
+                  <p className="mt-2 font-mono text-xs font-semibold text-[#5f655c]">{included ? `${item.weight.toFixed(1)} FP` : "합산 제외"}</p>
                 </div>
               </div>
               <div className="mt-4 flex justify-end gap-1.5">
@@ -86,6 +100,7 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
         <thead>
           <tr className="bg-[#f7f8f5] text-[11px] font-semibold uppercase tracking-[0.1em] text-[#858b82]">
             <th className="w-16 px-5 py-3.5 sm:px-7">No.</th>
+            <th className="min-w-[132px] px-4 py-3.5">FP 합산</th>
             <th className="px-4 py-3.5">애플리케이션</th>
             <th className="px-4 py-3.5">업무</th>
             <th className="min-w-[280px] px-4 py-3.5">단위프로세스 설명</th>
@@ -98,6 +113,8 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
           <AnimatePresence initial={false}>
             {items.map((item, index) => {
               const isEditing = editId === item.id;
+              const included = item.included !== false;
+              const duplicate = duplicateCandidates.get(item.id);
               return (
                 <motion.tr
                   key={item.id}
@@ -105,9 +122,16 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.18 }}
-                  className={`border-t border-[#eceee9] transition ${isEditing ? "bg-[#f7fbeF]" : "hover:bg-[#fbfcfa]"}`}
+                  className={`border-t border-[#eceee9] transition ${isEditing ? "bg-[#f7fbeF]" : "hover:bg-[#fbfcfa]"} ${included ? "" : "opacity-55"}`}
                 >
                   <td className="px-5 py-4 font-mono text-xs text-[#9a9f97] sm:px-7">{String(index + 1).padStart(2, "0")}</td>
+                  <td className="px-4 py-4">
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[#596057]">
+                      <input type="checkbox" checked={included} onChange={() => toggleItemIncluded(item.id)} aria-label={`${index + 1}번 항목 FP 합산 포함`} className="h-4 w-4 accent-[#6fa936]" />
+                      {included ? "포함" : "제외"}
+                    </label>
+                    {duplicate && <span title={duplicate.reason} className="mt-1.5 block w-fit rounded-full bg-[#fff1cf] px-2 py-1 text-[10px] font-semibold text-[#8a6518]">중복 가능 {duplicate.groupId}</span>}
+                  </td>
                   <td className="px-4 py-4">
                     {isEditing ? (
                       <input className={inputClass} value={item.appName} onChange={(event) => updateItem(item.id, "appName", event.target.value)} aria-label={`${index + 1}번 애플리케이션명`} />
@@ -153,7 +177,7 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
                       <span className="inline-flex rounded-full bg-[#edf1e9] px-3 py-1.5 font-mono text-[11px] font-semibold text-[#4a5146]">{item.fpType}</span>
                     )}
                   </td>
-                  <td className="px-4 py-4 text-right font-mono text-sm font-semibold text-[#343832]">{item.weight.toFixed(1)}</td>
+                  <td className="px-4 py-4 text-right font-mono text-sm font-semibold text-[#343832]">{included ? item.weight.toFixed(1) : "합산 제외"}</td>
                   <td className="px-5 py-4 sm:px-7">
                     <div className="flex justify-end gap-1.5">
                       <button
@@ -176,8 +200,8 @@ export function DataTable({ items, editId, setEditId, removeItem, updateItem }: 
       </table>
       </div>
       <div className="flex items-center justify-between border-t border-[#e8ebe5] bg-[#fafbf9] px-5 py-4 text-xs text-[#7d837a] sm:px-7">
-        <span>총 {items.length.toLocaleString("ko-KR")}개 항목</span>
-        <span>클릭해서 수정 가능</span>
+        <span>전체 {items.length.toLocaleString("ko-KR")}개 · FP 합산 {includedCount.toLocaleString("ko-KR")}개</span>
+        <span>{duplicateGroupCount > 0 ? `중복 가능 ${duplicateGroupCount}그룹 · 체크로 합산 조정` : "클릭해서 수정 가능"}</span>
       </div>
     </div>
   );

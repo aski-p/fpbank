@@ -2,10 +2,14 @@ import { FP_WEIGHTS } from "@/lib/fp-calculator";
 import type { FPItem, FPType } from "@/stores/fp-store";
 
 export const ANALYSIS_FILE_LIMITS = {
-  maxFiles: 8,
-  maxFileBytes: 10 * 1024 * 1024,
-  maxTotalBytes: 25 * 1024 * 1024,
+  maxFiles: 20,
+  maxFileBytes: 30 * 1024 * 1024,
+  maxTotalBytes: 100 * 1024 * 1024,
 } as const;
+
+function bytesToMegabytes(bytes: number): number {
+  return bytes / (1024 * 1024);
+}
 
 export const SUPPORTED_ANALYSIS_MIME_TYPES = [
   "image/png",
@@ -79,13 +83,13 @@ export function validateAnalysisFiles(files: AnalysisFileDescriptor[]): void {
       throw new AnalysisValidationError(`비어 있거나 유효하지 않은 파일입니다: ${file.name}`);
     }
     if (file.size > ANALYSIS_FILE_LIMITS.maxFileBytes) {
-      throw new AnalysisValidationError(`파일당 10MB를 초과할 수 없습니다: ${file.name}`);
+      throw new AnalysisValidationError(`파일당 ${bytesToMegabytes(ANALYSIS_FILE_LIMITS.maxFileBytes)}MB를 초과할 수 없습니다: ${file.name}`);
     }
     totalBytes += file.size;
   }
 
   if (totalBytes > ANALYSIS_FILE_LIMITS.maxTotalBytes) {
-    throw new AnalysisValidationError("전체 25MB를 초과할 수 없습니다.");
+    throw new AnalysisValidationError(`전체 ${bytesToMegabytes(ANALYSIS_FILE_LIMITS.maxTotalBytes)}MB를 초과할 수 없습니다.`);
   }
 }
 
@@ -384,22 +388,11 @@ export interface MergeAnalyzedItemsResult {
   skippedCount: number;
 }
 
-function normalizeComparable(value: string): string {
-  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("ko-KR");
-}
-
-function fpItemKey(item: Pick<FPItem, "appName" | "businessName" | "processName" | "fpType">): string {
-  return [item.appName, item.businessName, item.processName, item.fpType]
-    .map(normalizeComparable)
-    .join("|");
-}
-
 export function mergeAnalyzedItems(
   existing: FPItem[],
   analyzed: NormalizedFPAnalysisItem[],
   idFactory: () => string = () => crypto.randomUUID(),
 ): MergeAnalyzedItemsResult {
-  const keys = new Set(existing.map(fpItemKey));
   const additions: FPItem[] = [];
   let skippedCount = 0;
 
@@ -416,6 +409,7 @@ export function mergeAnalyzedItems(
       description: item.unitProcessName,
       fpType: item.fpType,
       weight: FP_WEIGHTS[item.fpType],
+      included: true,
       remark: [
         "AI 문서 분석",
         `신뢰도 ${Math.round(item.confidence * 100)}%`,
@@ -423,12 +417,6 @@ export function mergeAnalyzedItems(
         item.needsReview ? `검토 필요${item.reviewReasons.length ? `: ${item.reviewReasons.join(", ")}` : ""}` : "",
       ].filter(Boolean).join(" · "),
     };
-    const key = fpItemKey(candidate);
-    if (keys.has(key)) {
-      skippedCount += 1;
-      continue;
-    }
-    keys.add(key);
     additions.push(candidate);
   }
 

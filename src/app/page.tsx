@@ -81,7 +81,7 @@ export default function FPBankApp() {
         ) : (
           <div className="space-y-6">
             <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
-              <TotalSummaryCard totalFP={Number(hook.result.totalFP)} adjustedFP={Number(hook.result.adjustedFP)} itemCount={hook.items.length} />
+              <TotalSummaryCard totalFP={Number(hook.result.totalFP)} adjustedFP={Number(hook.result.adjustedFP)} itemCount={hook.result.includedItems.length} />
               <StatsCard fpByType={hook.result.fpByType} />
             </section>
 
@@ -89,7 +89,7 @@ export default function FPBankApp() {
               <div className="flex flex-col gap-4 border-b border-[#e5e8e1] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
                 <div>
                   <h2 className="text-xl font-semibold tracking-[-0.035em]">분석 항목</h2>
-                  <p className="mt-1 text-sm text-[#7b8178]">분류 결과를 검토하고 필요한 값을 바로 수정하세요.</p>
+                  <p className="mt-1 text-sm text-[#7b8178]">중복 가능 항목을 확인하고 체크박스로 FP 합산 포함 여부를 조정하세요.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={hook.clearAll} className="fp-focus inline-flex h-11 items-center gap-2 rounded-full border border-[#e2e5df] px-4 text-sm font-semibold text-[#666c63] transition hover:border-[#efb7b7] hover:bg-[#fff4f4] hover:text-[#bd3f3f]" aria-label="전체 항목 삭제">
@@ -100,7 +100,15 @@ export default function FPBankApp() {
                   </button>
                 </div>
               </div>
-              <DataTable items={hook.items} editId={hook.editId} setEditId={hook.setEditId} removeItem={hook.removeItem} updateItem={hook.updateItem} />
+              <DataTable
+                items={hook.items}
+                editId={hook.editId}
+                setEditId={hook.setEditId}
+                removeItem={hook.removeItem}
+                updateItem={hook.updateItem}
+                toggleItemIncluded={hook.toggleItemIncluded}
+                duplicateCandidates={hook.duplicateCandidates}
+              />
             </section>
           </div>
         )}

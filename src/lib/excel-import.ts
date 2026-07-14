@@ -1,4 +1,5 @@
 import type { FPItem, FPType } from "@/stores/fp-store";
+import { FP_WEIGHTS } from "@/lib/fp-calculator";
 
 const FP_TYPES = new Set<FPType>(["ILF", "EIF", "EI", "EO", "EQ"]);
 
@@ -57,9 +58,10 @@ export function parseFPExcelRows(
     if (!Array.isArray(row)) continue;
     const fpType = text(row[located.columns.fpType]).toUpperCase() as FPType;
     const rawWeight = row[located.columns.weight];
-    if (rawWeight === null || rawWeight === undefined || text(rawWeight) === "") continue;
-    const weight = numeric(rawWeight);
-    if (!FP_TYPES.has(fpType) || !Number.isFinite(weight) || weight <= 0) continue;
+    if (!FP_TYPES.has(fpType)) continue;
+    const sourceExcluded = rawWeight === null || rawWeight === undefined || text(rawWeight) === "";
+    const weight = sourceExcluded ? FP_WEIGHTS[fpType] : numeric(rawWeight);
+    if (!Number.isFinite(weight) || weight <= 0) continue;
 
     const appName = text(row[located.columns.appName]);
     const businessName = text(row[located.columns.businessName]);
@@ -75,7 +77,11 @@ export function parseFPExcelRows(
       description: description || processName,
       fpType,
       weight,
-      remark: "Excel 원본 FP",
+      included: !sourceExcluded,
+      remark: [
+        sourceExcluded ? "Excel 원본 합산 제외" : "Excel 원본 FP",
+        text(row[located.columns.weight + 1]),
+      ].filter(Boolean).join(" · "),
     });
   }
 

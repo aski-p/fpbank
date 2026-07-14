@@ -23,23 +23,28 @@ describe("validateAnalysisFiles", () => {
     ])).toThrowError(/지원하지 않는 파일 형식/);
   });
 
-  it("rejects more than eight files", () => {
-    const files = Array.from({ length: 9 }, (_, index) => ({
+  it("accepts up to twenty files and rejects the twenty-first", () => {
+    const accepted = Array.from({ length: 20 }, (_, index) => ({
       name: `${index}.png`, type: "image/png", size: 100,
     }));
-    expect(() => validateAnalysisFiles(files)).toThrowError(/최대 8개/);
+    expect(() => validateAnalysisFiles(accepted)).not.toThrow();
+    expect(() => validateAnalysisFiles([
+      ...accepted,
+      { name: "20.png", type: "image/png", size: 100 },
+    ])).toThrowError(/최대 20개/);
   });
 
   it("rejects oversized individual and combined uploads", () => {
     expect(() => validateAnalysisFiles([
-      { name: "large.pdf", type: "application/pdf", size: 10 * mb + 1 },
-    ])).toThrowError(/파일당 10MB/);
+      { name: "large.pdf", type: "application/pdf", size: 30 * mb + 1 },
+    ])).toThrowError(/파일당 30MB/);
 
     expect(() => validateAnalysisFiles([
-      { name: "a.pdf", type: "application/pdf", size: 9 * mb },
-      { name: "b.pdf", type: "application/pdf", size: 9 * mb },
-      { name: "c.pdf", type: "application/pdf", size: 8 * mb },
-    ])).toThrowError(/전체 25MB/);
+      { name: "a.pdf", type: "application/pdf", size: 30 * mb },
+      { name: "b.pdf", type: "application/pdf", size: 30 * mb },
+      { name: "c.pdf", type: "application/pdf", size: 30 * mb },
+      { name: "d.pdf", type: "application/pdf", size: 10 * mb + 1 },
+    ])).toThrowError(/전체 100MB/);
   });
 });
 
@@ -355,7 +360,7 @@ describe("mergeAnalyzedItems", () => {
     expect(result.items[0].remark).toContain("회원 등록 버튼");
   });
 
-  it("skips semantic duplicates already present in the table", () => {
+  it("preserves semantic duplicates so the user can decide whether to include them", () => {
     const existing = [{
       id: "old",
       appName: " bank app ",
@@ -367,9 +372,10 @@ describe("mergeAnalyzedItems", () => {
       remark: "수동 입력",
     }];
     const result = mergeAnalyzedItems(existing, [analyzed], () => "new");
-    expect(result.items).toHaveLength(1);
-    expect(result.addedCount).toBe(0);
-    expect(result.skippedCount).toBe(1);
+    expect(result.items).toHaveLength(2);
+    expect(result.addedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(result.items[1]).toMatchObject({ included: true });
   });
 
   it("does not apply review-required candidates automatically", () => {

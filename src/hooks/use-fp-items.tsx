@@ -3,6 +3,7 @@ import { calculateFP } from "@/lib/fp-calculator";
 import { parseFPExcelRows } from "@/lib/excel-import";
 import * as XLSX from "xlsx";
 import { assertExcelRowLimit, MAX_EXCEL_ROWS, validateExcelFile } from "@/lib/excel-file";
+import { detectDuplicateCandidates } from "@/lib/fp-duplicates";
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -14,11 +15,13 @@ export function useFPItems() {
   const addItemToStore = useFPStore((state) => state.addItem);
   const removeItem = useFPStore((state) => state.removeItem);
   const updateItem = useFPStore((state) => state.updateItem);
+  const toggleItemIncluded = useFPStore((state) => state.toggleItemIncluded);
   const setEditId = useFPStore((state) => state.setEditId);
   const clearAll = useFPStore((state) => state.clearAll);
   const loadFromExcel = useFPStore((state) => state.loadFromExcel);
 
   const result = calculateFP(items);
+  const duplicateCandidates = detectDuplicateCandidates(items);
 
   function addItem(item: Omit<FPItem, "id">) {
     addItemToStore({ ...item, id: makeId() });
@@ -52,9 +55,20 @@ export function useFPItems() {
       rows.push([`${type}: ${typeResult.count}개`, `합계 ${typeResult.totalFp} FP`]);
     }
 
-    rows.push([], ["애플리케이션명", "업무명", "프로세스명", "설명", "FP유형", "가중치"]);
+    rows.push([], ["FP 합산", "중복 후보", "중복 판단 근거", "애플리케이션명", "업무명", "프로세스명", "설명", "FP유형", "가중치"]);
     for (const item of items) {
-      rows.push([item.appName, item.businessName, item.processName, item.description, item.fpType, item.weight]);
+      const duplicate = duplicateCandidates.get(item.id);
+      rows.push([
+        item.included === false ? "제외" : "포함",
+        duplicate?.groupId ?? "",
+        duplicate?.reason ?? "",
+        item.appName,
+        item.businessName,
+        item.processName,
+        item.description,
+        item.fpType,
+        item.weight,
+      ]);
     }
 
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "FP산정");
@@ -70,6 +84,8 @@ export function useFPItems() {
     addItem,
     removeItem,
     updateItem,
+    toggleItemIncluded,
+    duplicateCandidates,
     setEditId,
     clearAll,
     loadFromExcel,

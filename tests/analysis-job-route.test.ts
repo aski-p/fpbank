@@ -41,7 +41,7 @@ describe("analysis job API", () => {
 
     const availability = await GET_COLLECTION();
     expect(availability.status).toBe(200);
-    expect(await availability.json()).toMatchObject({ available: false });
+    expect(await availability.json()).toMatchObject({ available: false, cloudAvailable: false });
 
     const response = await POST(request);
     expect(response.status).toBe(503);
@@ -57,13 +57,13 @@ describe("analysis job API", () => {
     const jobId = crypto.randomUUID();
     const accessToken = "a".repeat(43);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(Response.json({ available: true }))
+      .mockResolvedValueOnce(Response.json({ available: true, cloudAvailable: true }))
       .mockResolvedValueOnce(Response.json({ jobId, accessToken, status: "queued" }, { status: 202 }))
       .mockResolvedValueOnce(Response.json({ id: jobId, status: "completed", output }));
     vi.stubGlobal("fetch", fetchMock);
 
     const availability = await GET_COLLECTION();
-    expect(await availability.json()).toMatchObject({ available: true });
+    expect(await availability.json()).toMatchObject({ available: true, cloudAvailable: true });
 
     const form = new FormData();
     form.append("mode", "local");
@@ -88,6 +88,28 @@ describe("analysis job API", () => {
     expect(statusHeaders.get("authorization")).toBe(`Bearer ${accessToken}`);
     expect(statusHeaders.get("x-fp-worker-key")).toBe("worker-secret-value");
     expect(fetchMock.mock.calls.map((call) => call[1]?.redirect)).toEqual(["error", "error", "error"]);
+  });
+
+  it("reports Terra availability and rejects cloud mode without an API key", async () => {
+    vi.stubEnv("FP_ANALYSIS_MEMORY_QUEUE_ENABLED", "true");
+    vi.stubEnv("OPENAI_API_KEY", "");
+
+    const unavailable = await GET_COLLECTION();
+    expect(await unavailable.json()).toMatchObject({ available: true, cloudAvailable: false });
+
+    const form = new FormData();
+    form.append("mode", "cloud");
+    form.append("files", file());
+    const rejected = await POST(new Request("http://localhost/api/analyze-fp/jobs", {
+      method: "POST",
+      body: form,
+    }));
+    expect(rejected.status).toBe(503);
+    expect(await rejected.json()).toMatchObject({ code: "CLOUD_VERIFICATION_UNAVAILABLE" });
+
+    vi.stubEnv("OPENAI_API_KEY", "configured-key");
+    const available = await GET_COLLECTION();
+    expect(await available.json()).toMatchObject({ available: true, cloudAvailable: true });
   });
 
   it("requires the shared secret when a production worker is configured as private", async () => {
